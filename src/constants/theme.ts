@@ -51,6 +51,25 @@ export const Fonts = Platform.select({
   },
 });
 
+export const MethodColors: Record<string, string> = {
+  GET: '#22C55E',
+  POST: '#3B82F6',
+  PUT: '#F59E0B',
+  DELETE: '#EF4444',
+  PATCH: '#A855F7',
+  HEAD: '#6B7280',
+  OPTIONS: '#06B6D4',
+};
+
+export function getStatusColor(code: number): string {
+  if (code === 0) return '#EF4444';
+  if (code >= 500) return '#EF4444';
+  if (code >= 400) return '#F59E0B';
+  if (code >= 300) return '#3B82F6';
+  if (code >= 200) return '#22C55E';
+  return '#6B7280';
+}
+
 export const Spacing = {
   half: 2,
   one: 4,
