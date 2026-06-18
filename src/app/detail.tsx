@@ -1,14 +1,15 @@
 import { useState } from 'react';
-import { Alert, Platform, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { Alert, Modal, Platform, Pressable, ScrollView, StyleSheet, Text, View, useColorScheme } from 'react-native';
 import * as Clipboard from 'expo-clipboard';
 import { useLocalSearchParams, useRouter } from 'expo-router';
-import { SafeAreaView } from 'react-native-safe-area-context';
+import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
 import { Collapsible } from '@/components/ui/collapsible';
-import { MethodColors, Spacing, getStatusColor } from '@/constants/theme';
+import { Colors, MethodColors, Spacing, getStatusColor } from '@/constants/theme';
 import { getEntryById } from '@/data/mock-traffic';
+import type { TrafficEntry } from '@/types/traffic';
 
 function formatDuration(ms: number): string {
   if (ms >= 1000) return `${(ms / 1000).toFixed(1)}s`;
@@ -63,6 +64,50 @@ function BodyContent({ body }: { body: string | null }) {
   );
 }
 
+function buildCurl(entry: TrafficEntry): string {
+  const parts: string[] = ['curl'];
+  if (entry.method !== 'GET') {
+    parts.push(`-X ${entry.method}`);
+  }
+  parts.push(`'${entry.url}'`);
+  for (const [key, value] of Object.entries(entry.requestHeaders)) {
+    if (key.toLowerCase() === 'host') continue;
+    parts.push(`-H '${key}: ${value}'`);
+  }
+  if (entry.requestBody) {
+    parts.push(`-d '${entry.requestBody.replace(/'/g, "\\'")}'`);
+  }
+  return parts.join(' \\\n  ');
+}
+
+function ActionSheet({
+  visible,
+  onClose,
+  onCopyCurl,
+}: {
+  visible: boolean;
+  onClose: () => void;
+  onCopyCurl: () => void;
+}) {
+  const insets = useSafeAreaInsets();
+  const scheme = useColorScheme();
+  const colors = Colors[scheme === 'unspecified' ? 'light' : scheme];
+
+  return (
+    <Modal visible={visible} animationType="fade" transparent onRequestClose={onClose}>
+      <Pressable style={sheetStyles.backdrop} onPress={onClose}>
+        <View />
+      </Pressable>
+      <View style={[sheetStyles.sheet, { paddingBottom: insets.bottom + Spacing.three, backgroundColor: colors.background }]}>
+        <View style={sheetStyles.handle} />
+        <Pressable style={({ pressed }) => [sheetStyles.row, pressed && sheetStyles.rowPressed]} onPress={onCopyCurl}>
+          <ThemedText>Copy as cURL</ThemedText>
+        </Pressable>
+      </View>
+    </Modal>
+  );
+}
+
 type Tab = 'request' | 'response';
 
 export default function DetailScreen() {
@@ -70,6 +115,7 @@ export default function DetailScreen() {
   const router = useRouter();
   const entry = getEntryById(id ?? '');
   const [activeTab, setActiveTab] = useState<Tab>('request');
+  const [menuVisible, setMenuVisible] = useState(false);
 
   if (!entry) {
     return (
@@ -91,7 +137,12 @@ export default function DetailScreen() {
           <ThemedText type="linkPrimary" style={styles.backButton} onPress={() => router.back()}>
             ← Traffic
           </ThemedText>
-          <ThemedView style={styles.navSpacer} />
+          <Pressable
+            style={({ pressed }) => [styles.menuButton, pressed && styles.menuButtonPressed]}
+            onPress={() => setMenuVisible(true)}
+          >
+            <Text style={styles.menuDots}>⋮</Text>
+          </Pressable>
         </View>
 
         <ScrollView
@@ -222,6 +273,16 @@ export default function DetailScreen() {
             </View>
           )}
         </ScrollView>
+
+        <ActionSheet
+          visible={menuVisible}
+          onClose={() => setMenuVisible(false)}
+          onCopyCurl={async () => {
+            setMenuVisible(false);
+            await Clipboard.setStringAsync(buildCurl(entry));
+            Alert.alert('Copied', 'cURL command copied to clipboard');
+          }}
+        />
       </SafeAreaView>
     </ThemedView>
   );
@@ -246,8 +307,19 @@ const styles = StyleSheet.create({
   backButton: {
     paddingVertical: 4,
   },
-  navSpacer: {
-    flex: 1,
+  menuButton: {
+    paddingHorizontal: Spacing.one,
+    paddingVertical: Spacing.one,
+    borderRadius: Spacing.one,
+  },
+  menuButtonPressed: {
+    opacity: 0.5,
+  },
+  menuDots: {
+    fontSize: 20,
+    fontWeight: '700',
+    color: '#6B7280',
+    letterSpacing: 1,
   },
   scroll: {
     flex: 1,
@@ -377,5 +449,42 @@ const styles = StyleSheet.create({
   notFound: {
     textAlign: 'center',
     marginTop: Spacing.five,
+  },
+});
+
+const sheetStyles = StyleSheet.create({
+  backdrop: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    backgroundColor: 'rgba(0, 0, 0, 0.3)',
+  },
+  sheet: {
+    position: 'absolute',
+    bottom: 0,
+    left: 0,
+    right: 0,
+    borderTopLeftRadius: 16,
+    borderTopRightRadius: 16,
+    paddingHorizontal: Spacing.three,
+    paddingTop: Spacing.two,
+  },
+  handle: {
+    width: 36,
+    height: 4,
+    borderRadius: 2,
+    backgroundColor: '#D1D5DB',
+    alignSelf: 'center',
+    marginBottom: Spacing.three,
+  },
+  row: {
+    paddingVertical: Spacing.three,
+    paddingHorizontal: Spacing.two,
+    borderRadius: Spacing.two,
+  },
+  rowPressed: {
+    backgroundColor: 'rgba(128, 128, 128, 0.1)',
   },
 });
