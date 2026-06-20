@@ -35,6 +35,7 @@ class CaptureVpnService : VpnService() {
         const val PROXY_PORT = 8888
 
         @Volatile var isRunning = false
+        private var activeService: CaptureVpnService? = null
 
         fun start(context: Context) {
             val intent = Intent(context, CaptureVpnService::class.java).apply {
@@ -48,10 +49,7 @@ class CaptureVpnService : VpnService() {
         }
 
         fun stop(context: Context) {
-            val intent = Intent(context, CaptureVpnService::class.java).apply {
-                action = ACTION_STOP
-            }
-            context.startService(intent)
+            activeService?.stopVpn()
         }
     }
 
@@ -62,6 +60,7 @@ class CaptureVpnService : VpnService() {
 
     override fun onCreate() {
         super.onCreate()
+        activeService = this
         createNotificationChannel()
     }
 
@@ -115,18 +114,25 @@ class CaptureVpnService : VpnService() {
     }
 
     private fun stopVpn() {
+        if (!isRunning) return
+        Log.d(TAG, "Stopping VPN")
         isRunning = false
 
-        tcpConnections.values.forEach { try { it.close() } catch (_: Exception) {} }
-        tcpConnections.clear()
-
-        try { proxyServer?.stop() } catch (_: Exception) {}
-        proxyServer = null
-
+        // Close TUN first to unblock packet loop
         try { vpnInterface?.close() } catch (_: Exception) {}
         vpnInterface = null
 
+        // Close all TCP tunnels
+        tcpConnections.values.forEach { try { it.close() } catch (_: Exception) {} }
+        tcpConnections.clear()
+
+        // Stop proxy
+        try { proxyServer?.stop() } catch (_: Exception) {}
+        proxyServer = null
+
+        // Shutdown thread pool
         executor.shutdownNow()
+
         VpnModule.emitStatus("stopped")
         stopForeground(STOP_FOREGROUND_REMOVE)
         stopSelf()
@@ -400,6 +406,10 @@ class CaptureVpnService : VpnService() {
         }
     }
 
-    override fun onDestroy() { stopVpn(); super.onDestroy() }
+    override fun onDestroy() {
+        activeService = null
+        stopVpn()
+        super.onDestroy()
+    }
     override fun onRevoke() { stopVpn(); super.onRevoke() }
 }
