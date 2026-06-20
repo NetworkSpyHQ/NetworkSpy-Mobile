@@ -82,6 +82,21 @@ object HttpsCertManager {
         return Base64.encodeToString(cert.encoded, Base64.NO_WRAP)
     }
 
+    fun exportCAPEM(context: Context): File? {
+        val cert = rootCA?.certificate ?: return null
+        return try {
+            val dir = context.getExternalFilesDir(null) ?: context.filesDir
+            val file = File(dir, "vpn-test-ca.crt")
+            val writer = java.io.OutputStreamWriter(java.io.FileOutputStream(file))
+            writer.write("-----BEGIN CERTIFICATE-----\n")
+            writer.write(Base64.encodeToString(cert.encoded, Base64.DEFAULT))
+            writer.write("-----END CERTIFICATE-----\n")
+            writer.close()
+            file.setReadable(true, false)
+            file
+        } catch (_: Exception) { null }
+    }
+
     private fun generateRSAKeyPair(): KeyPair {
         val gen = KeyPairGenerator.getInstance("RSA")
         gen.initialize(2048, SecureRandom())

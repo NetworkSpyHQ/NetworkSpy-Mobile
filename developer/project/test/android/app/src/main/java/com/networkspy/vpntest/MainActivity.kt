@@ -279,26 +279,32 @@ class MainActivity : Activity() {
 
     private fun installCACert() {
         HttpsCertManager.ensureInitialized(this)
-        val certData = HttpsCertManager.getCAInstallData()
-        if (certData == null) {
-            Toast.makeText(this, "Failed to generate CA certificate", Toast.LENGTH_LONG).show()
+        val certFile = HttpsCertManager.exportCAPEM(this)
+        if (certFile == null || !certFile.exists()) {
+            Toast.makeText(this, "Failed to export CA certificate", Toast.LENGTH_LONG).show()
             return
         }
+        appendLog("CA cert exported to ${certFile.absolutePath}")
+
+        // Also open file with a share/send intent for easy access
         try {
-            if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.R) {
-                // Android 11+: direct user to Settings
-                val intent = android.content.Intent(android.provider.Settings.ACTION_SECURITY_SETTINGS)
-                startActivity(intent)
-                Toast.makeText(this, "Go to: Encryption & credentials > Install a certificate > CA certificate", Toast.LENGTH_LONG).show()
-            } else {
-                val intent = android.content.Intent("android.security.INSTALL_CERTIFICATE")
-                intent.putExtra("name", "VPN Test CA")
-                intent.putExtra("certificate", android.util.Base64.decode(certData, android.util.Base64.DEFAULT))
-                startActivity(intent)
-                appendLog("CA install prompted")
+            val uri = androidx.core.content.FileProvider.getUriForFile(
+                this, "$packageName.fileprovider", certFile)
+            val shareIntent = android.content.Intent(android.content.Intent.ACTION_SEND).apply {
+                type = "application/x-x509-ca-cert"
+                putExtra(android.content.Intent.EXTRA_STREAM, uri)
+                addFlags(android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION)
             }
-        } catch (e: Exception) {
-            Toast.makeText(this, "Install error: ${e.message}", Toast.LENGTH_LONG).show()
+            startActivity(android.content.Intent.createChooser(shareIntent, "Install CA cert via..."))
+        } catch (_: Exception) {
+            // Fallback: just open security settings
+            try {
+                startActivity(android.content.Intent(android.provider.Settings.ACTION_SECURITY_SETTINGS))
+                Toast.makeText(this,
+                    "Cert: ${certFile.absolutePath}\n" +
+                    "Settings → Encryption & credentials → Install certificate → CA certificate",
+                    Toast.LENGTH_LONG).show()
+            } catch (_: Exception) {}
         }
     }
 
