@@ -20,6 +20,8 @@ class VpnTestService : VpnService() {
 
         @Volatile var isRunning = false
 
+        var listener: ((String) -> Unit)? = null
+
         init {
             System.loadLibrary("vpn")
         }
@@ -33,6 +35,12 @@ class VpnTestService : VpnService() {
     private external fun jni_stop(tunFd: Int)
     private external fun jni_get_mtu(): Int
     private external fun jni_done()
+
+    // Called from native code via JNI
+    @Suppress("unused")
+    private fun onTraffic(msg: String) {
+        listener?.invoke(msg)
+    }
 
     // ── State ──────────────────────────────────────────────────
 
@@ -53,6 +61,7 @@ class VpnTestService : VpnService() {
     fun startVpn() {
         if (isRunning) return
 
+        listener?.invoke("VPN starting...")
         Log.i(TAG, "Starting VPN...")
         try {
             vpnInterface = Builder()
@@ -81,11 +90,13 @@ class VpnTestService : VpnService() {
         jni_start(vpnInterface!!.fd, false, 3, "", 0)
 
         isRunning = true
+        listener?.invoke("VPN started")
         Log.i(TAG, "VPN started successfully")
     }
 
     fun stopVpn() {
         if (!isRunning) return
+        listener?.invoke("VPN stopping...")
         Log.i(TAG, "Stopping VPN...")
         isRunning = false
 
@@ -93,6 +104,7 @@ class VpnTestService : VpnService() {
         try { vpnInterface?.close() } catch (_: Exception) {}
         vpnInterface = null
 
+        listener?.invoke("VPN stopped")
         Log.i(TAG, "VPN stopped")
         stopForeground(STOP_FOREGROUND_REMOVE)
         stopSelf()

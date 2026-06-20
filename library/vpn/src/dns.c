@@ -7,11 +7,32 @@
 #include <netinet/in.h>
 #include <arpa/inet.h>
 
+static void extract_dns_name(const uint8_t *data, int len, char *out, int out_len) {
+    if (len < 12) { out[0] = '?'; out[1] = 0; return; }
+    int pos = 12;
+    int wrote = 0;
+    while (pos < len && data[pos] != 0 && wrote < out_len - 1) {
+        int label_len = data[pos];
+        if (label_len == 0 || (label_len & 0xC0) == 0xC0) break;
+        pos++;
+        if (pos + label_len > len) break;
+        if (wrote > 0) { out[wrote++] = '.'; }
+        for (int i = 0; i < label_len && pos < len && wrote < out_len - 1; i++) {
+            out[wrote++] = data[pos++];
+        }
+    }
+    out[wrote] = 0;
+}
+
 void handle_dns_packet(struct vpn_context *ctx,
                        uint32_t src_ip, uint32_t dst_ip,
                        uint16_t src_port, uint16_t dst_port,
                        const uint8_t *data, int len) {
     if (len < 12) return;
+
+    char qname[128];
+    extract_dns_name(data, len, qname, sizeof(qname));
+    notify_traffic(ctx, "DNS %s", qname);
 
     int sock = socket(AF_INET, SOCK_DGRAM, 0);
     if (sock < 0) return;

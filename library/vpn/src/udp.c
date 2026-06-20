@@ -28,6 +28,12 @@ void handle_udp_packet(struct vpn_context *ctx,
         return;
     }
 
+    notify_traffic(ctx, "UDP %u.%u.%u.%u:%u -> %u.%u.%u.%u:%u",
+                   (src_ip >> 24) & 0xFF, (src_ip >> 16) & 0xFF,
+                   (src_ip >> 8) & 0xFF, src_ip & 0xFF, src_port,
+                   (dst_ip >> 24) & 0xFF, (dst_ip >> 16) & 0xFF,
+                   (dst_ip >> 8) & 0xFF, dst_ip & 0xFF, dst_port);
+
     int sock = socket(AF_INET, SOCK_DGRAM, 0);
     if (sock < 0) return;
 

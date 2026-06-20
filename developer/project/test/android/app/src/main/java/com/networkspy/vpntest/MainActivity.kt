@@ -21,6 +21,8 @@ class MainActivity : Activity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
+        VpnTestService.listener = { msg -> appendLog(msg) }
+
         val layout = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             setPadding(32, 48, 32, 32)
@@ -76,14 +78,12 @@ class MainActivity : Activity() {
             startService(intent)
         }
         updateUI(true)
-        appendLog("VPN starting...")
     }
 
     private fun stopVpn() {
         val intent = Intent(this, VpnTestService::class.java)
         stopService(intent)
         updateUI(false)
-        appendLog("VPN stopped")
     }
 
     private fun updateUI(running: Boolean) {
@@ -116,5 +116,10 @@ class MainActivity : Activity() {
                 Toast.makeText(this, "VPN permission denied", Toast.LENGTH_SHORT).show()
             }
         }
+    }
+
+    override fun onDestroy() {
+        VpnTestService.listener = null
+        super.onDestroy()
     }
 }

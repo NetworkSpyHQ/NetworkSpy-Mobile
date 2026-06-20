@@ -181,6 +181,12 @@ void handle_tcp_packet(struct vpn_context *ctx,
              (dst_ip >> 24) & 0xFF, (dst_ip >> 16) & 0xFF,
              (dst_ip >> 8) & 0xFF, dst_ip & 0xFF, dst_port);
 
+        notify_traffic(ctx, "TCP %u.%u.%u.%u:%u -> %u.%u.%u.%u:%u",
+                       (src_ip >> 24) & 0xFF, (src_ip >> 16) & 0xFF,
+                       (src_ip >> 8) & 0xFF, src_ip & 0xFF, src_port,
+                       (dst_ip >> 24) & 0xFF, (dst_ip >> 16) & 0xFF,
+                       (dst_ip >> 8) & 0xFF, dst_ip & 0xFF, dst_port);
+
         s = session_create(ctx, src_ip, dst_ip, src_port, dst_port);
         if (!s) return;
 

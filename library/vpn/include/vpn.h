@@ -61,6 +61,7 @@ struct vpn_context {
     JavaVM *jvm;
     jobject instance;
     jmethodID mid_protect;
+    jmethodID mid_on_traffic;
 
     int tun_fd;
     bool running;
@@ -101,6 +102,7 @@ void session_remove(struct vpn_context *ctx, struct tcp_session *s);
 void session_cleanup(struct vpn_context *ctx);
 
 int protect_socket(struct vpn_context *ctx, int fd);
+void notify_traffic(struct vpn_context *ctx, const char *fmt, ...);
 
 void handle_tcp_packet(struct vpn_context *ctx,
                        uint32_t src_ip, uint32_t dst_ip,

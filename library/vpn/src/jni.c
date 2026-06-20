@@ -4,6 +4,7 @@
 #include <unistd.h>
 #include <errno.h>
 #include <time.h>
+#include <stdarg.h>
 
 struct vpn_context *g_ctx = NULL;
 
@@ -43,6 +44,25 @@ static void *cleanup_thread(void *arg) {
     return NULL;
 }
 
+void notify_traffic(struct vpn_context *ctx, const char *fmt, ...) {
+    if (!ctx || !ctx->mid_on_traffic) return;
+
+    JNIEnv *env;
+    if ((*ctx->jvm)->GetEnv(ctx->jvm, (void **)&env, JNI_VERSION_1_6) != JNI_OK) {
+        return;
+    }
+
+    char buf[256];
+    va_list args;
+    va_start(args, fmt);
+    vsnprintf(buf, sizeof(buf), fmt, args);
+    va_end(args);
+
+    jstring msg = (*env)->NewStringUTF(env, buf);
+    (*env)->CallVoidMethod(env, ctx->instance, ctx->mid_on_traffic, msg);
+    (*env)->DeleteLocalRef(env, msg);
+}
+
 static void vpn_init(JNIEnv *env, jobject instance) {
     if (g_ctx) {
         LOGW("VPN already initialized");
@@ -73,6 +93,11 @@ static void vpn_init(JNIEnv *env, jobject instance) {
         free(g_ctx);
         g_ctx = NULL;
         return;
+    }
+
+    g_ctx->mid_on_traffic = (*env)->GetMethodID(env, cls, "onTraffic", "(Ljava/lang/String;)V");
+    if (!g_ctx->mid_on_traffic) {
+        LOGW("Failed to find onTraffic(String) method - traffic logging disabled");
     }
 
     g_ctx->tun_fd = -1;
