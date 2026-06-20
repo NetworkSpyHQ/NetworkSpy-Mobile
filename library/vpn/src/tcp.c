@@ -7,6 +7,7 @@
 #include <fcntl.h>
 #include <netinet/in.h>
 #include <arpa/inet.h>
+#include <poll.h>
 
 static void build_tcp_header(uint8_t *pkt, int offset,
                              uint16_t src_port, uint16_t dst_port,
@@ -70,14 +71,10 @@ static int connect_with_timeout(int fd, const struct sockaddr_in *addr, int time
     int ret = connect(fd, (const struct sockaddr *)addr, sizeof(*addr));
 
     if (ret < 0 && errno == EINPROGRESS) {
-        fd_set wfds;
-        struct timeval tv;
-        FD_ZERO(&wfds);
-        FD_SET(fd, &wfds);
-        tv.tv_sec = timeout_sec;
-        tv.tv_usec = 0;
-
-        ret = select(fd + 1, NULL, &wfds, NULL, &tv);
+        struct pollfd pfd;
+        pfd.fd = fd;
+        pfd.events = POLLOUT;
+        ret = poll(&pfd, 1, timeout_sec * 1000);
         if (ret <= 0) {
             return -1;
         }
