@@ -16,7 +16,7 @@ import {
 } from '@/constants/theme';
 import type { ComposeEntry } from '@/types/traffic';
 
-function ComposeRow({ entry, asyncMode }: { entry: ComposeEntry; asyncMode: boolean }) {
+function ComposeRow({ entry, asyncMode, onFire }: { entry: ComposeEntry; asyncMode: boolean; onFire: () => void }) {
   const router = useRouter();
   const [sending, setSending] = useState(false);
   const [lastResult, setLastResult] = useState<{ code: number } | null>(null);
@@ -39,7 +39,8 @@ function ComposeRow({ entry, asyncMode }: { entry: ComposeEntry; asyncMode: bool
 
   const handleSend = async () => {
     if (asyncMode) {
-      sendRequest(); // fire & forget — no UI change
+      sendRequest();
+      onFire();
       return;
     }
     setSending(true);
@@ -172,6 +173,11 @@ export default function ComposerListScreen() {
   const router = useRouter();
   const [asyncMode, setAsyncMode] = useState(false);
   const [menuVisible, setMenuVisible] = useState(false);
+  const [fireCount, setFireCount] = useState(0);
+
+  const handleFire = useCallback(() => {
+    setFireCount(c => c + 1);
+  }, []);
 
   const sections = useMemo(() => {
     if (composes.length === 0) return [];
@@ -199,6 +205,14 @@ export default function ComposerListScreen() {
           </View>
         </View>
 
+        {asyncMode && fireCount > 0 && (
+          <Pressable style={styles.toastBanner} onPress={() => setFireCount(0)}>
+            <ThemedText type="small" style={{ color: '#F59E0B' }}>
+              ⚡ {fireCount} request{fireCount > 1 ? 's' : ''} fired
+            </ThemedText>
+          </Pressable>
+        )}
+
         {composes.length === 0 ? (
           <View style={styles.emptyState}>
             <ThemedText themeColor="textSecondary">
@@ -209,7 +223,7 @@ export default function ComposerListScreen() {
           <SectionList
             sections={sections}
             keyExtractor={(item) => item.id}
-            renderItem={({ item }) => <ComposeRow entry={item} asyncMode={asyncMode} />}
+            renderItem={({ item }) => <ComposeRow entry={item} asyncMode={asyncMode} onFire={handleFire} />}
             contentContainerStyle={styles.listContent}
             style={styles.list}
             ItemSeparatorComponent={Separator}
@@ -359,6 +373,17 @@ const styles = StyleSheet.create({
   separator: {
     height: StyleSheet.hairlineWidth,
     marginLeft: Spacing.three,
+  },
+  toastBanner: {
+    marginHorizontal: Spacing.three,
+    marginBottom: Spacing.two,
+    paddingVertical: Spacing.two,
+    paddingHorizontal: Spacing.three,
+    borderRadius: Spacing.two,
+    backgroundColor: 'rgba(245, 158, 11, 0.1)',
+    borderWidth: 1,
+    borderColor: 'rgba(245, 158, 11, 0.2)',
+    alignItems: 'center',
   },
   emptyState: {
     flex: 1,
