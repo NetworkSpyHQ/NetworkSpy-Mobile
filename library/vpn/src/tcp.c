@@ -256,9 +256,8 @@ void handle_tcp_packet(struct vpn_context *ctx,
 
         s->state = S_CONNECTED;
         s->active = true;
-        // Defer reader thread until client ACKs our SYN-ACK
 
-        LOGI("TCP connected %u.%u.%u.%u:%u (waiting for client ACK)",
+        LOGI("TCP connected %u.%u.%u.%u:%u",
              (dst_ip >> 24) & 0xFF, (dst_ip >> 16) & 0xFF,
              (dst_ip >> 8) & 0xFF, dst_ip & 0xFF, dst_port);
 
@@ -275,25 +274,18 @@ void handle_tcp_packet(struct vpn_context *ctx,
 
         s->server_seq++; // SYN consumes 1 seq number
 
+        // Spawn reader thread for server -> client data
+        pthread_create(&s->thread, NULL, tcp_server_reader, s);
+        pthread_detach(s->thread);
+
         return;
     }
 
     if (!s) {
-        // No session for this packet - could be a stray ACK
         return;
     }
 
     s->last_activity = time(NULL);
-
-    if (s->state == S_CONNECTED && !s->active) {
-        // Client ACK received - complete handshake and start reader
-        LOGI("TCP handshake complete %u.%u.%u.%u:%u, starting reader",
-             (dst_ip >> 24) & 0xFF, (dst_ip >> 16) & 0xFF,
-             (dst_ip >> 8) & 0xFF, dst_ip & 0xFF, dst_port);
-        s->active = true;
-        pthread_create(&s->thread, NULL, tcp_server_reader, s);
-        pthread_detach(s->thread);
-    }
 
     if (flags & TCP_FIN) {
         LOGI("TCP FIN %u.%u.%u.%u:%u -> %u.%u.%u.%u:%u",
