@@ -206,11 +206,20 @@ export default function ComposerListScreen() {
         </View>
 
         {asyncMode && fireCount > 0 && (
-          <Pressable style={styles.toastBanner} onPress={() => setFireCount(0)}>
-            <ThemedText type="small" style={{ color: '#F59E0B' }}>
-              ⚡ {fireCount} request{fireCount > 1 ? 's' : ''} fired
-            </ThemedText>
-          </Pressable>
+          <View style={styles.toastBanner}>
+            <View style={styles.toastContent}>
+              <ThemedText type="small" style={{ color: '#F59E0B' }}>
+                ⚡ {fireCount} request{fireCount > 1 ? 's' : ''} fired
+              </ThemedText>
+              <Pressable
+                onPress={() => setFireCount(0)}
+                hitSlop={8}
+                style={styles.toastClose}
+              >
+                <Text style={styles.toastCloseText}>✕</Text>
+              </Pressable>
+            </View>
+          </View>
         )}
 
         {composes.length === 0 ? (
@@ -401,7 +410,24 @@ const styles = StyleSheet.create({
     backgroundColor: 'rgba(245, 158, 11, 0.1)',
     borderWidth: 1,
     borderColor: 'rgba(245, 158, 11, 0.2)',
+  },
+  toastContent: {
+    flexDirection: 'row',
     alignItems: 'center',
+    justifyContent: 'space-between',
+  },
+  toastClose: {
+    width: 24,
+    height: 24,
+    borderRadius: 12,
+    backgroundColor: 'rgba(245, 158, 11, 0.2)',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  toastCloseText: {
+    color: '#F59E0B',
+    fontSize: 12,
+    fontWeight: '600',
   },
   emptyState: {
     flex: 1,
