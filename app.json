@@ -36,7 +36,8 @@
             "imageWidth": 76
           }
         }
-      ]
+      ],
+      "react-native-nitro-fetch"
     ],
     "experiments": {
       "typedRoutes": true,

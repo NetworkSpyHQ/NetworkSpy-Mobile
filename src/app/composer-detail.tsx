@@ -1,4 +1,5 @@
 import { useCallback, useRef, useState } from 'react';
+import { fetch as nitroFetch } from 'react-native-nitro-fetch';
 import {
   ActivityIndicator,
   Alert,
@@ -234,7 +235,7 @@ export default function ComposerDetailScreen() {
         fetchOptions.body = body;
       }
 
-      const res = await fetch(parsedUrl, fetchOptions);
+      const res = await nitroFetch(parsedUrl, fetchOptions);
       const duration = Date.now() - startTime;
 
       const responseHeaders: Record<string, string> = {};
