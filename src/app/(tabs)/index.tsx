@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useColorScheme } from 'react-native';
 import {
   Modal,
@@ -24,6 +24,8 @@ import {
   getStatusColor,
 } from '@/constants/theme';
 import type { TrafficEntry } from '@/types/traffic';
+import { startVpn, stopVpn, onTrafficCapture, onVpnStatus, onVpnError } from '@/native/VpnModule';
+import { addCapturedEntry, getCapturedTraffic } from '@/data/captured-traffic';
 
 function formatTime(ts: number): string {
   const date = new Date(ts);
@@ -185,11 +187,46 @@ function MenuSheet({
 }
 
 export default function TrafficListScreen() {
-  const [capturing] = useState(false);
+  const [capturing, setCapturing] = useState(false);
   const [grouped, setGrouped] = useState(false);
   const [menuVisible, setMenuVisible] = useState(false);
-  const traffic = mockTraffic;
+  const [liveTraffic, setLiveTraffic] = useState<TrafficEntry[]>([]);
+  const traffic = useMemo(() => {
+    if (liveTraffic.length > 0) {
+      return [...liveTraffic, ...mockTraffic];
+    }
+    return mockTraffic;
+  }, [liveTraffic]);
+
   const insets = useSafeAreaInsets();
+
+  useEffect(() => {
+    const unsubTraffic = onTrafficCapture((entry) => {
+      addCapturedEntry(entry);
+      setLiveTraffic(getCapturedTraffic());
+    });
+    const unsubStatus = onVpnStatus((status) => {
+      setCapturing(status === 'started');
+    });
+    const unsubError = onVpnError((msg) => {
+      console.warn('VPN error:', msg);
+    });
+
+    return () => {
+      unsubTraffic();
+      unsubStatus();
+      unsubError();
+    };
+  }, []);
+
+  const toggleCapture = useCallback(() => {
+    if (capturing) {
+      stopVpn();
+      setCapturing(false);
+    } else {
+      startVpn();
+    }
+  }, [capturing]);
 
   const sections = useMemo(() => {
     if (grouped) return groupByHost(traffic);
@@ -202,7 +239,9 @@ export default function TrafficListScreen() {
         <View style={styles.header}>
           <ThemedText type="subtitle">Traffic</ThemedText>
           <View style={styles.headerRight}>
-            <View style={[styles.captureDot, capturing && styles.captureDotActive]} />
+            <Pressable onPress={toggleCapture} style={styles.captureDotButton}>
+              <View style={[styles.captureDot, capturing && styles.captureDotActive]} />
+            </Pressable>
             <ThemedText type="small" themeColor="textSecondary">
               {traffic.length}
             </ThemedText>
@@ -292,6 +331,10 @@ const styles = StyleSheet.create({
   },
   captureDotActive: {
     backgroundColor: '#22C55E',
+  },
+  captureDotButton: {
+    padding: Spacing.two,
+    margin: -Spacing.two,
   },
   list: {
     flex: 1,

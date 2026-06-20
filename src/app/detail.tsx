@@ -9,6 +9,7 @@ import { ThemedView } from '@/components/themed-view';
 import { Collapsible } from '@/components/ui/collapsible';
 import { Colors, MethodColors, Spacing, getStatusColor } from '@/constants/theme';
 import { getEntryById } from '@/data/mock-traffic';
+import { getCapturedById } from '@/data/captured-traffic';
 import { saveCompose, generateId } from '@/data/compose-store';
 import type { TrafficEntry } from '@/types/traffic';
 
@@ -119,7 +120,7 @@ type Tab = 'request' | 'response';
 export default function DetailScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
   const router = useRouter();
-  const entry = getEntryById(id ?? '');
+  const entry = getEntryById(id ?? '') ?? getCapturedById(id ?? '');
   const [activeTab, setActiveTab] = useState<Tab>('request');
   const [menuVisible, setMenuVisible] = useState(false);
 
