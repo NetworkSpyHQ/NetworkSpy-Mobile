@@ -40,6 +40,7 @@ static void *cleanup_thread(void *arg) {
         sleep(30);
         if (ctx->running) {
             session_cleanup(ctx);
+            udp_session_cleanup(ctx);
         }
     }
     return NULL;
@@ -114,7 +115,8 @@ static void vpn_init(JNIEnv *env, jobject instance) {
     g_ctx->tun_fd = -1;
     g_ctx->shutdown_pipe[0] = -1;
     g_ctx->shutdown_pipe[1] = -1;
-    pthread_mutex_init(&g_ctx->sessions_lock, NULL);
+    pthread_mutex_init(&g_ctx->tcp_lock, NULL);
+    pthread_mutex_init(&g_ctx->udp_lock, NULL);
 
     srand((unsigned int)time(NULL));
 
@@ -198,10 +200,10 @@ static void vpn_stop(JNIEnv *env, jobject instance, jint tunFd) {
         g_ctx->shutdown_pipe[1] = -1;
     }
 
-    // Close all sessions
-    pthread_mutex_lock(&g_ctx->sessions_lock);
+    // Close all TCP sessions
+    pthread_mutex_lock(&g_ctx->tcp_lock);
     for (int i = 0; i < MAX_SESSIONS; i++) {
-        struct tcp_session *s = g_ctx->sessions[i];
+        struct tcp_session *s = g_ctx->tcp_sessions[i];
         while (s) {
             struct tcp_session *next = s->next;
             s->active = false;
@@ -213,9 +215,27 @@ static void vpn_stop(JNIEnv *env, jobject instance, jint tunFd) {
             free(s);
             s = next;
         }
-        g_ctx->sessions[i] = NULL;
+        g_ctx->tcp_sessions[i] = NULL;
     }
-    pthread_mutex_unlock(&g_ctx->sessions_lock);
+    pthread_mutex_unlock(&g_ctx->tcp_lock);
+
+    // Close all UDP sessions
+    pthread_mutex_lock(&g_ctx->udp_lock);
+    for (int i = 0; i < MAX_SESSIONS; i++) {
+        struct udp_session *s = g_ctx->udp_sessions[i];
+        while (s) {
+            struct udp_session *next = s->next;
+            s->active = false;
+            if (s->socket_fd >= 0) {
+                close(s->socket_fd);
+                s->socket_fd = -1;
+            }
+            free(s);
+            s = next;
+        }
+        g_ctx->udp_sessions[i] = NULL;
+    }
+    pthread_mutex_unlock(&g_ctx->udp_lock);
 
     LOGI("VPN stopped");
 }

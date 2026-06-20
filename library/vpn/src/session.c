@@ -29,10 +29,10 @@ struct tcp_session *session_create(struct vpn_context *ctx,
 
     uint32_t hash = session_hash(src_ip, dst_ip, src_port, dst_port);
 
-    pthread_mutex_lock(&ctx->sessions_lock);
-    s->next = ctx->sessions[hash];
-    ctx->sessions[hash] = s;
-    pthread_mutex_unlock(&ctx->sessions_lock);
+    pthread_mutex_lock(&ctx->tcp_lock);
+    s->next = ctx->tcp_sessions[hash];
+    ctx->tcp_sessions[hash] = s;
+    pthread_mutex_unlock(&ctx->tcp_lock);
 
     return s;
 }
@@ -42,26 +42,26 @@ struct tcp_session *session_lookup(struct vpn_context *ctx,
                                    uint16_t src_port, uint16_t dst_port) {
     uint32_t hash = session_hash(src_ip, dst_ip, src_port, dst_port);
 
-    pthread_mutex_lock(&ctx->sessions_lock);
-    struct tcp_session *s = ctx->sessions[hash];
+    pthread_mutex_lock(&ctx->tcp_lock);
+    struct tcp_session *s = ctx->tcp_sessions[hash];
     while (s) {
         if (s->src_ip == src_ip && s->dst_ip == dst_ip &&
             s->src_port == src_port && s->dst_port == dst_port) {
             s->last_activity = time(NULL);
-            pthread_mutex_unlock(&ctx->sessions_lock);
+            pthread_mutex_unlock(&ctx->tcp_lock);
             return s;
         }
         s = s->next;
     }
-    pthread_mutex_unlock(&ctx->sessions_lock);
+    pthread_mutex_unlock(&ctx->tcp_lock);
     return NULL;
 }
 
 void session_remove(struct vpn_context *ctx, struct tcp_session *s) {
     uint32_t hash = session_hash(s->src_ip, s->dst_ip, s->src_port, s->dst_port);
 
-    pthread_mutex_lock(&ctx->sessions_lock);
-    struct tcp_session **prev = &ctx->sessions[hash];
+    pthread_mutex_lock(&ctx->tcp_lock);
+    struct tcp_session **prev = &ctx->tcp_sessions[hash];
     while (*prev) {
         if (*prev == s) {
             *prev = s->next;
@@ -70,15 +70,15 @@ void session_remove(struct vpn_context *ctx, struct tcp_session *s) {
         }
         prev = &(*prev)->next;
     }
-    pthread_mutex_unlock(&ctx->sessions_lock);
+    pthread_mutex_unlock(&ctx->tcp_lock);
 }
 
 void session_cleanup(struct vpn_context *ctx) {
     time_t now = time(NULL);
 
-    pthread_mutex_lock(&ctx->sessions_lock);
+    pthread_mutex_lock(&ctx->tcp_lock);
     for (int i = 0; i < MAX_SESSIONS; i++) {
-        struct tcp_session **prev = &ctx->sessions[i];
+        struct tcp_session **prev = &ctx->tcp_sessions[i];
         while (*prev) {
             struct tcp_session *s = *prev;
             if (now - s->last_activity > SESSION_TIMEOUT) {
@@ -94,5 +94,5 @@ void session_cleanup(struct vpn_context *ctx) {
             }
         }
     }
-    pthread_mutex_unlock(&ctx->sessions_lock);
+    pthread_mutex_unlock(&ctx->tcp_lock);
 }

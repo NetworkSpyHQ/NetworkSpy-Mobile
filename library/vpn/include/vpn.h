@@ -57,6 +57,21 @@ struct tcp_session {
     struct tcp_session *next;
 };
 
+struct udp_session {
+    uint32_t src_ip;
+    uint32_t dst_ip;
+    uint16_t src_port;
+    uint16_t dst_port;
+    int socket_fd;
+    time_t created;
+    time_t last_activity;
+    uint64_t tx_bytes;
+    uint64_t rx_bytes;
+    pthread_t thread;
+    bool active;
+    struct udp_session *next;
+};
+
 struct vpn_context {
     JavaVM *jvm;
     jobject instance;
@@ -74,8 +89,10 @@ struct vpn_context {
     pthread_t cleanup_thread;
     int shutdown_pipe[2];
 
-    struct tcp_session *sessions[MAX_SESSIONS];
-    pthread_mutex_t sessions_lock;
+    struct tcp_session *tcp_sessions[MAX_SESSIONS];
+    struct udp_session *udp_sessions[MAX_SESSIONS];
+    pthread_mutex_t tcp_lock;
+    pthread_mutex_t udp_lock;
 };
 
 extern struct vpn_context *g_ctx;
@@ -100,6 +117,15 @@ struct tcp_session *session_lookup(struct vpn_context *ctx,
                                    uint16_t src_port, uint16_t dst_port);
 void session_remove(struct vpn_context *ctx, struct tcp_session *s);
 void session_cleanup(struct vpn_context *ctx);
+
+struct udp_session *udp_session_create(struct vpn_context *ctx,
+                                        uint32_t src_ip, uint32_t dst_ip,
+                                        uint16_t src_port, uint16_t dst_port);
+struct udp_session *udp_session_lookup(struct vpn_context *ctx,
+                                        uint32_t src_ip, uint32_t dst_ip,
+                                        uint16_t src_port, uint16_t dst_port);
+void udp_session_remove(struct vpn_context *ctx, struct udp_session *s);
+void udp_session_cleanup(struct vpn_context *ctx);
 
 int protect_socket(struct vpn_context *ctx, int fd);
 void notify_traffic(struct vpn_context *ctx, const char *fmt, ...);
