@@ -89,21 +89,28 @@ function ComposeRow({ entry, asyncMode }: { entry: ComposeEntry; asyncMode: bool
         {sending ? (
           <ActivityIndicator size="small" color="#3B82F6" />
         ) : asyncMode && fireCount > 0 ? (
-          <View style={styles.fireBadge}>
+          <Pressable
+            style={styles.fireBadge}
+            onPress={(e) => { e.stopPropagation(); setFireCount(0); }}
+          >
             <ThemedText type="small" style={{ color: '#F59E0B', fontFamily: Platform.select({ ios: 'ui-monospace', default: 'monospace' }) }}>
               {fireCount}
             </ThemedText>
-          </View>
+          </Pressable>
         ) : lastResult ? (
-          <ThemedText
-            type="small"
-            style={{
-              color: lastResult.code === 0 ? '#EF4444' : lastResult.code >= 400 ? '#F59E0B' : '#22C55E',
-              fontFamily: Platform.select({ ios: 'ui-monospace', default: 'monospace' }),
-            }}
+          <Pressable
+            onPress={(e) => { e.stopPropagation(); setLastResult(null); }}
           >
-            {lastResult.code || 'ERR'}
-          </ThemedText>
+            <ThemedText
+              type="small"
+              style={{
+                color: lastResult.code === 0 ? '#EF4444' : lastResult.code >= 400 ? '#F59E0B' : '#22C55E',
+                fontFamily: Platform.select({ ios: 'ui-monospace', default: 'monospace' }),
+              }}
+            >
+              {lastResult.code || 'ERR'}
+            </ThemedText>
+          </Pressable>
         ) : (
           <Pressable
             style={({ pressed }) => [styles.playButton, pressed && styles.playButtonPressed]}
