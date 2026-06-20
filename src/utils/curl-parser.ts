@@ -7,6 +7,42 @@ export interface ParsedCurl {
   body: string | null;
 }
 
+const flagsWithValue = new Set([
+  '-X', '--request',
+  '-H', '--header',
+  '-d', '--data', '--data-raw', '--data-binary',
+  '--url',
+  '-F', '--form', '--form-string',
+  '-u', '--user',
+  '-A', '--user-agent',
+  '-b', '--cookie',
+  '-c', '--cookie-jar',
+  '-e', '--referer',
+  '-o', '--output',
+  '-w', '--write-out',
+  '-m', '--max-time',
+  '--connect-timeout',
+  '-x', '--proxy',
+]);
+
+const booleanFlags = new Set([
+  '-v', '--verbose',
+  '-s', '--silent',
+  '-L', '--location',
+  '-k', '--insecure',
+  '-i', '--include',
+  '-I', '--head',
+  '--compressed',
+  '--progress-bar',
+  '-n', '--netrc',
+  '-f', '--fail',
+  '--globoff',
+  '--http1.0',
+  '--http1.1',
+  '--http2',
+  '--http3',
+]);
+
 export function parseCurl(input: string): ParsedCurl | null {
   const trimmed = input.trim();
 
@@ -73,6 +109,14 @@ function tokenize(input: string): string[] {
   return tokens;
 }
 
+function isFlag(token: string): boolean {
+  return flagsWithValue.has(token) || booleanFlags.has(token);
+}
+
+function consumesNextToken(token: string): boolean {
+  return flagsWithValue.has(token);
+}
+
 function extractMethod(tokens: string[]): HttpMethod {
   for (let i = 0; i < tokens.length; i++) {
     if ((tokens[i] === '-X' || tokens[i] === '--request') && i + 1 < tokens.length) {
@@ -82,7 +126,7 @@ function extractMethod(tokens: string[]): HttpMethod {
   }
 
   const hasData = tokens.some(
-    (t) => t === '-d' || t === '--data' || t === '--data-raw' || t === '--data-binary'
+    (t) => t === '-d' || t === '--data' || t === '--data-raw' || t === '--data-binary' || t === '-F' || t === '--form'
   );
 
   return hasData ? 'POST' : 'GET';
@@ -90,6 +134,7 @@ function extractMethod(tokens: string[]): HttpMethod {
 
 function extractHeaders(tokens: string[]): [string, string][] {
   const headers: [string, string][] = [];
+  let hasFormData = false;
 
   for (let i = 0; i < tokens.length; i++) {
     if ((tokens[i] === '-H' || tokens[i] === '--header') && i + 1 < tokens.length) {
@@ -101,6 +146,13 @@ function extractHeaders(tokens: string[]): [string, string][] {
         if (name) headers.push([name, value]);
       }
     }
+    if (tokens[i] === '-F' || tokens[i] === '--form') {
+      hasFormData = true;
+    }
+  }
+
+  if (hasFormData && !headers.some(([k]) => k.toLowerCase() === 'content-type')) {
+    headers.push(['Content-Type', 'multipart/form-data']);
   }
 
   return headers;
@@ -118,34 +170,53 @@ function extractBody(tokens: string[]): string | null {
       return tokens[i + 1];
     }
   }
+
+  const formFields: string[] = [];
+  for (let i = 0; i < tokens.length; i++) {
+    if ((tokens[i] === '-F' || tokens[i] === '--form' || tokens[i] === '--form-string') && i + 1 < tokens.length) {
+      const value = tokens[i + 1];
+      const semicolonIdx = value.indexOf(';');
+      const fieldPart = semicolonIdx > 0 ? value.substring(0, semicolonIdx) : value;
+      formFields.push(fieldPart);
+    }
+  }
+
+  if (formFields.length > 0) {
+    return formFields.map((f) => {
+      const eqIdx = f.indexOf('=');
+      if (eqIdx > 0) {
+        const key = f.substring(0, eqIdx);
+        const val = f.substring(eqIdx + 1);
+        if (val.startsWith('@')) {
+          return `# ${key}=${val} (file upload)`;
+        }
+        return `${key}=${val}`;
+      }
+      return f;
+    }).join('\n');
+  }
+
   return null;
 }
 
 function extractUrl(tokens: string[]): string | null {
-  const flagSet = new Set([
-    '-X', '--request', '-H', '--header', '-d', '--data',
-    '--data-raw', '--data-binary', '-v', '--verbose', '-s',
-    '--silent', '-L', '--location', '-o', '--output',
-    '-u', '--user', '-A', '--user-agent', '-b', '--cookie',
-    '-c', '--cookie-jar', '-e', '--referer', '-k', '--insecure',
-    '-i', '--include', '-I', '--head', '-w', '--write-out',
-    '--compressed', '-m', '--max-time', '--connect-timeout',
-    '-x', '--proxy', '-n', '--netrc', '--url',
-  ]);
+  for (let i = 1; i < tokens.length; i++) {
+    if (tokens[i] === '--url' && i + 1 < tokens.length) {
+      return tokens[i + 1];
+    }
+  }
 
   for (let i = 1; i < tokens.length; i++) {
-    if (flagSet.has(tokens[i])) {
-      i++;
-      continue;
-    }
     if (tokens[i].match(/^https?:\/\//i)) {
       return tokens[i];
     }
   }
 
   for (let i = 1; i < tokens.length; i++) {
-    if (flagSet.has(tokens[i])) {
-      i++;
+    if (isFlag(tokens[i])) {
+      if (consumesNextToken(tokens[i])) {
+        i++;
+      }
       continue;
     }
     if (tokens[i].startsWith('-')) continue;
