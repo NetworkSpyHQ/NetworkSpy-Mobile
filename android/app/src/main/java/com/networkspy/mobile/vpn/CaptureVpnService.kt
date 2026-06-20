@@ -225,11 +225,11 @@ class CaptureVpnService : VpnService() {
 
         if (isSyn && !isRst) {
             if (tcpTunnels.size >= MAX_TCP_TUNNELS) {
-                logw("TCP tunnel limit reached, dropping SYN $key")
+                logw("TCP tunnel limit reached, dropping $key")
                 return
             }
             tcpTunnels[key]?.close()
-            logd("TCP SYN $key (${tcpTunnels.size + 1}/${MAX_TCP_TUNNELS} tunnels)")
+            logi("TCP SYN $key (${tcpTunnels.size + 1}/${MAX_TCP_TUNNELS} tunnels)")
             val tunnel = TcpTunnel(srcIp, dstIp, srcPort, dstPort, ipHdrLen, seqNum, key)
             tcpTunnels[key] = tunnel
             executor.execute { tunnel.run() }
@@ -260,22 +260,26 @@ class CaptureVpnService : VpnService() {
 
         fun run() {
             try {
-                logd("Tunnel $key connecting to ${ipStr(dstIp)}:$dstPort")
+                logi("Tunnel connecting ${ipStr(dstIp)}:$dstPort (via $key)")
                 val channel = SocketChannel.open()
                 val sock = channel.socket()
                 sock.reuseAddress = true
-                // Explicitly bind to a real interface address, not the VPN's 10.0.2.1
                 val realAddr = findRealAddress()
                 if (realAddr != null) {
                     sock.bind(InetSocketAddress(realAddr, 0))
-                    logd("Tunnel $key bound to $realAddr:${sock.localPort}")
+                    logi("Tunnel bound to $realAddr:${sock.localPort}")
+                } else {
+                    logw("No real address found, binding to default")
                 }
                 val protected = protect(sock)
-                logd("Tunnel $key protect()=$protected")
+                logi("Tunnel protect()=$protected")
+                if (!protected) {
+                    loge("Tunnel protect() FAILED")
+                }
                 channel.connect(InetSocketAddress(InetAddress.getByAddress(dstIp), dstPort))
                 channel.configureBlocking(true)
                 socket = sock
-                logd("Tunnel $key connected local=${sock.localSocketAddress}")
+                logi("Tunnel connected! local=${sock.localSocketAddress} remote=${sock.remoteSocketAddress}")
 
                 val synAck = buildTcpPacket(0x12, ByteArray(0), 0) // SYN+ACK
                 mySeq++ // SYN consumes 1 seq number
