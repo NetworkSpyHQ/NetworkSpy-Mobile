@@ -70,9 +70,11 @@ class CaptureVpnService : VpnService() {
 
     private var vpnInterface: ParcelFileDescriptor? = null
     private var proxyServer: HttpCaptureProxy? = null
-    private val executor: ExecutorService = Executors.newCachedThreadPool()
+    private val executor: ExecutorService = Executors.newFixedThreadPool(16)
     private val tcpTunnels = ConcurrentHashMap<String, TcpTunnel>()
     private var tunOutput: FileOutputStream? = null
+
+    private val MAX_TCP_TUNNELS = 50
 
     override fun onCreate() {
         super.onCreate()
@@ -141,6 +143,8 @@ class CaptureVpnService : VpnService() {
         try { proxyServer?.stop() } catch (_: Exception) {}
         proxyServer = null
 
+        executor.shutdown()
+        try { executor.awaitTermination(2, java.util.concurrent.TimeUnit.SECONDS) } catch (_: Exception) {}
         executor.shutdownNow()
 
         VpnModule.emitStatus("stopped")
@@ -206,6 +210,10 @@ class CaptureVpnService : VpnService() {
         if (dstPort == PROXY_PORT) return
 
         if (isSyn && !isRst) {
+            if (tcpTunnels.size >= MAX_TCP_TUNNELS) {
+                // Drop new connections if at capacity
+                return
+            }
             tcpTunnels[key]?.close()
             val tunnel = TcpTunnel(srcIp, dstIp, srcPort, dstPort, ipHdrLen, seqNum)
             tcpTunnels[key] = tunnel

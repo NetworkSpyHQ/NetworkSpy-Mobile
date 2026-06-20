@@ -43,7 +43,7 @@ class HttpCaptureProxy(
     }
 
     private var serverSocket: ServerSocket? = null
-    private val executor: ExecutorService = Executors.newCachedThreadPool()
+    private val executor: ExecutorService = Executors.newFixedThreadPool(8)
     @Volatile private var running = false
 
     fun start() {
