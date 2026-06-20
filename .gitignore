@@ -36,14 +36,14 @@ yarn-error.*
 # typescript
 *.tsbuildinfo
 
+# builds
+*.apk
+*.aab
+*.ap_
+*.dex
+
 example
 
-# generated native folders
-/ios
-/android
-# Keep VPN service native sources
-!/android/app/src/main/AndroidManifest.xml
-!/android/app/src/main/java/com/networkspy/mobile/MainActivity.kt
-!/android/app/src/main/java/com/networkspy/mobile/MainApplication.kt
-!/android/app/src/main/java/com/networkspy/mobile/vpn/
-!/android/app/src/main/res/drawable/ic_tab_*.xml
+# IDE
+.idea/
+*.iml
