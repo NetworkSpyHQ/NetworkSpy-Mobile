@@ -167,6 +167,14 @@ class CaptureVpnService : VpnService() {
                 } catch (e: Exception) {
                     loge("Packet error: ${e.message}")
                 }
+
+                // Periodic stats
+                val now = System.currentTimeMillis()
+                if (now - lastLogTime > 10000) {
+                    logi("Stats: TCP=$packetTcp, UDP=$packetUdp, tunnels=${tcpTunnels.size}")
+                    packetTcp = 0; packetUdp = 0
+                    lastLogTime = now
+                }
             }
         } catch (e: Exception) {
             if (isRunning) loge("Loop error: ${e.message}")
@@ -182,10 +190,14 @@ class CaptureVpnService : VpnService() {
 
         val protocol = data[9].toInt() and 0xFF
         when (protocol) {
-            6 -> handleTcp(data, length)
-            17 -> handleUdp(data, length)
+            6 -> { packetTcp++; handleTcp(data, length) }
+            17 -> { packetUdp++; handleUdp(data, length) }
         }
     }
+
+    private var packetTcp = 0L
+    private var packetUdp = 0L
+    private var lastLogTime = System.currentTimeMillis()
 
     // ── TCP ──────────────────────────────────────────────────
 
@@ -211,16 +223,19 @@ class CaptureVpnService : VpnService() {
 
         if (isSyn && !isRst) {
             if (tcpTunnels.size >= MAX_TCP_TUNNELS) {
-                // Drop new connections if at capacity
+                logw("TCP tunnel limit reached, dropping SYN $key")
                 return
             }
             tcpTunnels[key]?.close()
-            val tunnel = TcpTunnel(srcIp, dstIp, srcPort, dstPort, ipHdrLen, seqNum)
+            logd("TCP SYN $key (${tcpTunnels.size + 1}/${MAX_TCP_TUNNELS} tunnels)")
+            val tunnel = TcpTunnel(srcIp, dstIp, srcPort, dstPort, ipHdrLen, seqNum, key)
             tcpTunnels[key] = tunnel
             executor.execute { tunnel.run() }
         } else if (isRst) {
+            logd("TCP RST $key")
             tcpTunnels.remove(key)?.close()
         } else if (isFin) {
+            logd("TCP FIN $key")
             tcpTunnels[key]?.sendFin()
         } else if (payloadLen > 0) {
             tcpTunnels[key]?.sendData(data, payloadOff, payloadLen)
@@ -233,7 +248,8 @@ class CaptureVpnService : VpnService() {
         private val srcPort: Int,
         private val dstPort: Int,
         private val ipHdrLen: Int,
-        clientSeq: Int
+        clientSeq: Int,
+        private val key: String
     ) {
         private var socket: Socket? = null
         private var mySeq = (Math.random() * Int.MAX_VALUE).toInt()
@@ -242,16 +258,19 @@ class CaptureVpnService : VpnService() {
 
         fun run() {
             try {
+                logd("Tunnel $key connecting to ${ipStr(dstIp)}:$dstPort")
                 val sock = Socket()
                 protect(sock)
                 sock.connect(InetSocketAddress(InetAddress.getByAddress(dstIp), dstPort), 10000)
                 socket = sock
+                logd("Tunnel $key connected")
 
                 val synAck = buildTcpPacket(0x12, ByteArray(0), 0) // SYN+ACK
                 mySeq++ // SYN consumes 1 seq number
                 sentSynAck = true
 
                 writeToTun(synAck)
+                logd("Tunnel $key SYN-ACK sent")
 
                 // Read from server, write to TUN
                 val buf = ByteArray(8192)
@@ -264,7 +283,10 @@ class CaptureVpnService : VpnService() {
                         mySeq += len
                     }
                 }
-            } catch (_: Exception) {}
+                logd("Tunnel $key server closed")
+            } catch (e: Exception) {
+                loge("Tunnel $key error: ${e.message}")
+            }
             close()
         }
 
@@ -283,7 +305,8 @@ class CaptureVpnService : VpnService() {
         }
 
         fun close() {
-            tcpTunnels.remove("${ipStr(srcIp)}:$srcPort->${ipStr(dstIp)}:$dstPort")
+            tcpTunnels.remove(key)
+            logd("Tunnel $key closed")
             try { socket?.close() } catch (_: Exception) {}
         }
 
@@ -344,6 +367,8 @@ class CaptureVpnService : VpnService() {
 
         if (payloadLen <= 0) return
 
+        logd("UDP ${ipStr(srcIp)}:$srcPort -> ${ipStr(dstIp)}:$dstPort len=$payloadLen")
+
         executor.execute {
             try {
                 DatagramSocket().use { socket ->
@@ -360,6 +385,7 @@ class CaptureVpnService : VpnService() {
                     // Write UDP response back to TUN
                     val pkt = buildUdpPacket(dstIp, srcIp, dstPort, srcPort, resp.data, resp.length)
                     writeToTun(pkt)
+                    logd("UDP response ${ipStr(dstIp)}:$dstPort -> ${ipStr(srcIp)}:$srcPort len=${resp.length}")
                 }
             } catch (_: Exception) {}
         }
