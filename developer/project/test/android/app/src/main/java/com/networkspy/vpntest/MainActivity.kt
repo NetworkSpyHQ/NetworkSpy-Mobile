@@ -9,64 +9,249 @@ import android.widget.ScrollView
 import android.widget.TextView
 import android.widget.LinearLayout
 import android.widget.Toast
-import com.networkspy.vpntest.BuildConfig
+import android.widget.FrameLayout
+import android.view.Gravity
+import android.graphics.Color
+import android.graphics.Typeface
 
 class MainActivity : Activity() {
 
     private val VPN_REQUEST_CODE = 42
     private lateinit var statusText: TextView
-    private lateinit var logText: TextView
+    private lateinit var hashText: TextView
+    private lateinit var trafficLog: TextView
+    private lateinit var captureLog: TextView
+    private lateinit var trafficScroll: ScrollView
+    private lateinit var captureScroll: ScrollView
+    private lateinit var trafficTab: TextView
+    private lateinit var captureTab: TextView
+    private lateinit var tabContainer: LinearLayout
     private lateinit var startButton: Button
     private lateinit var stopButton: Button
+
+    data class CaptureEntry(
+        val id: Int,
+        val type: String,
+        val method: String,
+        val url: String,
+        val host: String,
+        val status: Int,
+        val contentType: String
+    )
+
+    private val captureEntries = mutableListOf<CaptureEntry>()
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
         VpnTestService.listener = { msg -> appendLog(msg) }
+        VpnTestService.captureListener = { json -> handleCapture(json) }
 
-        val layout = LinearLayout(this).apply {
+        val root = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            setPadding(32, 48, 32, 32)
+            setPadding(16, 48, 16, 16)
         }
 
         statusText = TextView(this).apply {
             text = "VPN Status: Idle"
-            textSize = 18f
-            setPadding(0, 0, 0, 4)
+            textSize = 16f
+            setPadding(0, 0, 0, 2)
         }
-        layout.addView(statusText)
+        root.addView(statusText)
 
-        val hashText = TextView(this).apply {
+        hashText = TextView(this).apply {
             text = BuildConfig.GIT_HASH
-            textSize = 11f
-            setPadding(0, 0, 0, 16)
+            textSize = 10f
+            setPadding(0, 0, 0, 8)
         }
-        layout.addView(hashText)
+        root.addView(hashText)
 
-        startButton = Button(this).apply {
+        val buttonRow = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+        }
+        val startButton = Button(this).apply {
             text = "Start VPN"
             setOnClickListener { prepareAndStartVpn() }
         }
-        layout.addView(startButton)
-
-        stopButton = Button(this).apply {
+        this.startButton = startButton
+        buttonRow.addView(startButton)
+        val stopButton = Button(this).apply {
             text = "Stop VPN"
             isEnabled = false
             setOnClickListener { stopVpn() }
         }
-        layout.addView(stopButton)
+        this.stopButton = stopButton
+        buttonRow.addView(stopButton)
+        root.addView(buttonRow)
 
-        logText = TextView(this).apply {
+        tabContainer = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            setPadding(0, 12, 0, 4)
+        }
+
+        trafficTab = createTab("Traffic", true) { showTraffic() }
+        captureTab = createTab("Capture", false) { showCapture() }
+        tabContainer.addView(trafficTab)
+        tabContainer.addView(captureTab)
+        root.addView(tabContainer)
+
+        trafficLog = TextView(this).apply {
             text = "Log output:\n"
-            textSize = 12f
-            setPadding(0, 24, 0, 0)
+            textSize = 11f
+            setPadding(4, 4, 4, 4)
         }
-        val scrollView = ScrollView(this).apply {
-            addView(logText)
-        }
-        layout.addView(scrollView)
+        trafficScroll = ScrollView(this).apply { addView(trafficLog) }
 
-        setContentView(layout)
+        captureLog = TextView(this).apply {
+            text = ""
+            textSize = 11f
+            setPadding(4, 4, 4, 4)
+        }
+        captureScroll = ScrollView(this).apply {
+            addView(captureLog)
+            visibility = android.view.View.GONE
+        }
+
+        val contentFrame = FrameLayout(this).apply {
+            layoutParams = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT, 0, 1f
+            )
+        }
+        contentFrame.addView(trafficScroll)
+        contentFrame.addView(captureScroll)
+        root.addView(contentFrame)
+
+        setContentView(root)
+    }
+
+    private fun createTab(label: String, active: Boolean, onClick: () -> Unit): TextView {
+        return TextView(this).apply {
+            text = "  $label  "
+            textSize = 13f
+            setPadding(12, 6, 12, 6)
+            setOnClickListener { onClick() }
+            updateTabStyle(this, active)
+        }
+    }
+
+    private fun updateTabStyle(tab: TextView, active: Boolean) {
+        if (active) {
+            tab.setBackgroundColor(Color.parseColor("#2196F3"))
+            tab.setTextColor(Color.WHITE)
+            tab.setTypeface(null, Typeface.BOLD)
+        } else {
+            tab.setBackgroundColor(Color.parseColor("#E0E0E0"))
+            tab.setTextColor(Color.BLACK)
+            tab.setTypeface(null, Typeface.NORMAL)
+        }
+    }
+
+    private fun showTraffic() {
+        updateTabStyle(trafficTab, true)
+        updateTabStyle(captureTab, false)
+        trafficScroll.visibility = android.view.View.VISIBLE
+        captureScroll.visibility = android.view.View.GONE
+    }
+
+    private fun showCapture() {
+        updateTabStyle(trafficTab, false)
+        updateTabStyle(captureTab, true)
+        trafficScroll.visibility = android.view.View.GONE
+        captureScroll.visibility = android.view.View.VISIBLE
+        refreshCaptureLog()
+    }
+
+    private fun handleCapture(json: String) {
+        try {
+            val entries = parseHttpJson(json)
+            if (entries != null) {
+                captureEntries.add(entries)
+                runOnUiThread { refreshCaptureLog() }
+            }
+        } catch (_: Exception) {}
+    }
+
+    private fun parseHttpJson(json: String): CaptureEntry? {
+        var id = 0
+        var type = ""
+        var method = ""
+        var url = ""
+        var host = ""
+        var status = 0
+        var contentType = ""
+
+        val pairs = json.removeSurrounding("{", "}").split(",")
+        for (pair in pairs) {
+            val kv = pair.split(":", limit = 2)
+            if (kv.size < 2) continue
+            val key = kv[0].trim().removeSurrounding("\"")
+            val value = kv[1].trim().removeSurrounding("\"").removeSuffix("\"")
+            when (key) {
+                "id" -> id = value.toIntOrNull() ?: 0
+                "type" -> type = value
+                "method" -> method = value
+                "url" -> url = value
+                "host" -> host = value
+                "status" -> status = value.toIntOrNull() ?: 0
+                "contentType" -> contentType = value
+            }
+        }
+
+        if (id == 0) return null
+
+        val existing = captureEntries.find { it.id == id }
+        if (existing != null) {
+            val idx = captureEntries.indexOf(existing)
+            val merged = existing.copy(
+                type = if (type == "response") type else existing.type,
+                method = if (method.isNotEmpty()) method else existing.method,
+                url = if (url.isNotEmpty()) url else existing.url,
+                host = if (host.isNotEmpty()) host else existing.host,
+                status = if (status > 0) status else existing.status,
+                contentType = if (contentType.isNotEmpty()) contentType else existing.contentType
+            )
+            captureEntries[idx] = merged
+            return merged
+        }
+
+        return CaptureEntry(id, type, method, url, host, status, contentType)
+    }
+
+    private fun refreshCaptureLog() {
+        val sb = StringBuilder()
+        val formatter = java.text.SimpleDateFormat("HH:mm:ss", java.util.Locale.getDefault())
+        val now = formatter.format(java.util.Date())
+
+        for (entry in captureEntries.reversed()) {
+            val icon = when (entry.type) {
+                "https" -> "\uD83D\uDD12"
+                "request" -> "\u2191"
+                else -> "\u2193"
+            }
+            val status = if (entry.status > 0) " ${entry.status}" else ""
+
+            val line = when {
+                entry.type == "https" -> "$icon https://${entry.host}"
+                entry.type == "request" -> "$icon ${entry.method}$status ${entry.host}${entry.url}"
+                else -> "$icon$status ${entry.contentType}"
+            }
+            sb.append("[$now] $line\n")
+        }
+
+        if (sb.isEmpty()) {
+            sb.append("No HTTP traffic captured yet.\n")
+            sb.append("Visit a website in your browser after starting VPN.\n")
+        }
+
+        captureLog.text = sb.toString()
+    }
+
+    private fun appendLog(msg: String) {
+        runOnUiThread {
+            val timestamp = java.text.SimpleDateFormat("HH:mm:ss", java.util.Locale.getDefault())
+                .format(java.util.Date())
+            trafficLog.append("[$timestamp] $msg\n")
+        }
     }
 
     private fun prepareAndStartVpn() {
@@ -107,14 +292,6 @@ class MainActivity : Activity() {
         }
     }
 
-    private fun appendLog(msg: String) {
-        runOnUiThread {
-            val timestamp = java.text.SimpleDateFormat("HH:mm:ss", java.util.Locale.getDefault())
-                .format(java.util.Date())
-            logText.append("[$timestamp] $msg\n")
-        }
-    }
-
     @Deprecated("Deprecated in Java")
     override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
         super.onActivityResult(requestCode, resultCode, data)
@@ -129,6 +306,7 @@ class MainActivity : Activity() {
 
     override fun onDestroy() {
         VpnTestService.listener = null
+        VpnTestService.captureListener = null
         super.onDestroy()
     }
 }

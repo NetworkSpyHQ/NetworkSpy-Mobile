@@ -27,6 +27,11 @@ struct tcp_session *session_create(struct vpn_context *ctx,
     s->last_activity = s->created;
     s->active = false;
 
+    s->session_id = ctx->next_session_id++;
+    s->is_https = (dst_port == 443);
+    s->http_parsed = false;
+    s->sni_host[0] = 0;
+
     uint32_t hash = session_hash(src_ip, dst_ip, src_port, dst_port);
 
     pthread_mutex_lock(&ctx->tcp_lock);
@@ -87,7 +92,6 @@ void session_cleanup(struct vpn_context *ctx) {
                     close(s->socket_fd);
                 }
                 s->state = S_CLOSED;
-                s->active = false;
                 free(s);
             } else {
                 prev = &(*prev)->next;

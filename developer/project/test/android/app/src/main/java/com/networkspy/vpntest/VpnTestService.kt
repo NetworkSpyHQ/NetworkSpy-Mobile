@@ -22,6 +22,7 @@ class VpnTestService : VpnService() {
         @Volatile var activeService: VpnTestService? = null
 
         var listener: ((String) -> Unit)? = null
+        var captureListener: ((String) -> Unit)? = null
 
         init {
             System.loadLibrary("vpn")
@@ -41,6 +42,11 @@ class VpnTestService : VpnService() {
     @Suppress("unused")
     private fun onTraffic(msg: String) {
         listener?.invoke(msg)
+    }
+
+    @Suppress("unused")
+    private fun onHttpCapture(json: String) {
+        captureListener?.invoke(json)
     }
 
     // ── State ──────────────────────────────────────────────────

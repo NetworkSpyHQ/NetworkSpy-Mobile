@@ -67,6 +67,12 @@ struct tcp_session {
     pthread_t thread;
     bool active;
     struct tcp_session *next;
+
+    // HTTP capture
+    bool http_parsed;
+    int  session_id;
+    bool is_https;
+    char sni_host[256];
 };
 
 struct udp_session {
@@ -99,6 +105,7 @@ struct vpn_context {
     jobject instance;
     jmethodID mid_protect;
     jmethodID mid_on_traffic;
+    jmethodID mid_on_http;
 #else
     vpn_protect_fn protect_cb;
     vpn_traffic_fn traffic_cb;
@@ -119,6 +126,8 @@ struct vpn_context {
     struct udp_session *udp_sessions[MAX_SESSIONS];
     pthread_mutex_t tcp_lock;
     pthread_mutex_t udp_lock;
+
+    int next_session_id;
 };
 
 extern struct vpn_context *g_ctx;
@@ -186,5 +195,11 @@ void handle_dns_packet(struct vpn_context *ctx,
                        uint32_t src_ip, uint32_t dst_ip,
                        uint16_t src_port, uint16_t dst_port,
                        const uint8_t *data, int len);
+
+// HTTP capture
+void http_check_request(struct tcp_session *s, const uint8_t *data, int len);
+void http_check_response(struct tcp_session *s, const uint8_t *data, int len);
+void tls_extract_sni(struct tcp_session *s, const uint8_t *data, int len);
+void on_http_event(struct vpn_context *ctx, const char *event_json);
 
 #endif

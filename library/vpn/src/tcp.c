@@ -134,6 +134,11 @@ static void *tcp_server_reader(void *arg) {
 
         send_tun_packet(ctx, pkt, total_len);
         s->server_seq += n;
+
+        if (s->http_parsed && !s->is_https) {
+            http_check_response(s, buf, (int)n);
+        }
+
         free(pkt);
     }
 
@@ -338,6 +343,12 @@ void handle_tcp_packet(struct vpn_context *ctx,
         if (n < 0) {
             LOGE("TCP write to server failed: %s", strerror(errno));
             s->active = false;
+        } else if (!s->http_parsed) {
+            if (s->is_https) {
+                tls_extract_sni(s, packet + payload_off, payload_len);
+            } else {
+                http_check_request(s, packet + payload_off, payload_len);
+            }
         }
     }
 }

@@ -11,6 +11,7 @@ add_library(vpn SHARED
     src/dns.c
     src/session.c
     src/util.c
+    src/http.c
 )
 
 target_include_directories(vpn PRIVATE include)

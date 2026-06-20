@@ -237,6 +237,36 @@ int protect_socket(struct vpn_context *ctx, int fd) {
 }
 
 // ═══════════════════════════════════════════════════════════════
+// HTTP capture callback
+// ═══════════════════════════════════════════════════════════════
+
+void on_http_event(struct vpn_context *ctx, const char *json) {
+    if (!ctx) return;
+    LOGI("HTTP: %s", json);
+#if defined(__ANDROID__)
+    if (!ctx->mid_on_http) return;
+    JNIEnv *env;
+    bool attached = false;
+    if ((*ctx->jvm)->GetEnv(ctx->jvm, (void **)&env, JNI_VERSION_1_6) != JNI_OK) {
+        if ((*ctx->jvm)->AttachCurrentThread(ctx->jvm, &env, NULL) != JNI_OK) return;
+        attached = true;
+    }
+    jstring msg = (*env)->NewStringUTF(env, json);
+    if (msg) {
+        (*env)->CallVoidMethod(env, ctx->instance, ctx->mid_on_http, msg);
+        (*env)->DeleteLocalRef(env, msg);
+    }
+    if (attached) {
+        (*ctx->jvm)->DetachCurrentThread(ctx->jvm);
+    }
+#else
+    if (ctx->traffic_cb) {
+        ctx->traffic_cb(json);
+    }
+#endif
+}
+
+// ═══════════════════════════════════════════════════════════════
 // Android JNI entry points
 // ═══════════════════════════════════════════════════════════════
 
@@ -281,11 +311,18 @@ static void jni_vpn_init(JNIEnv *env, jobject instance) {
         LOGW("Failed to find onTraffic(String) method - traffic logging disabled");
     }
 
+    g_ctx->mid_on_http = (*env)->GetMethodID(env, cls, "onHttpCapture", "(Ljava/lang/String;)V");
+    if (!g_ctx->mid_on_http) {
+        LOGW("Failed to find onHttpCapture(String) method - HTTP capture disabled");
+    }
+
     g_ctx->tun_fd = -1;
     g_ctx->shutdown_pipe[0] = -1;
     g_ctx->shutdown_pipe[1] = -1;
     pthread_mutex_init(&g_ctx->tcp_lock, NULL);
     pthread_mutex_init(&g_ctx->udp_lock, NULL);
+
+    g_ctx->next_session_id = 1;
 
     srand((unsigned int)time(NULL));
 
@@ -389,6 +426,8 @@ void vpn_init_ios(vpn_protect_fn protect, vpn_traffic_fn traffic) {
     g_ctx->shutdown_pipe[1] = -1;
     pthread_mutex_init(&g_ctx->tcp_lock, NULL);
     pthread_mutex_init(&g_ctx->udp_lock, NULL);
+
+    g_ctx->next_session_id = 1;
 
     srand((unsigned int)time(NULL));
 
