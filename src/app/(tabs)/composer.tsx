@@ -216,7 +216,7 @@ export default function ComposerListScreen() {
                 hitSlop={8}
                 style={styles.toastClose}
               >
-                <Text style={styles.toastCloseText}>✕</Text>
+                <ThemedText type="small" style={{ color: '#F59E0B' }}>Reset</ThemedText>
               </Pressable>
             </View>
           </View>
@@ -417,17 +417,10 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
   },
   toastClose: {
-    width: 24,
-    height: 24,
-    borderRadius: 12,
+    paddingHorizontal: Spacing.two,
+    paddingVertical: Spacing.half + 2,
+    borderRadius: Spacing.one,
     backgroundColor: 'rgba(245, 158, 11, 0.2)',
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  toastCloseText: {
-    color: '#F59E0B',
-    fontSize: 12,
-    fontWeight: '600',
   },
   emptyState: {
     flex: 1,
