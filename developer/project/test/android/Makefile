@@ -8,6 +8,7 @@ build:
 	./gradlew :app:assembleDebug
 
 install: build
+	-adb uninstall $(PACKAGE)
 	adb install -r $(APK)
 
 uninstall:
