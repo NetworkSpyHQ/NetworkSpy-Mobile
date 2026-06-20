@@ -84,17 +84,42 @@ object HttpsCertManager {
 
     fun exportCAPEM(context: Context): File? {
         val cert = rootCA?.certificate ?: return null
+        val pem = "-----BEGIN CERTIFICATE-----\n" +
+                  Base64.encodeToString(cert.encoded, Base64.DEFAULT) +
+                  "-----END CERTIFICATE-----\n"
+
         return try {
-            val dir = context.getExternalFilesDir(null) ?: context.filesDir
-            val file = File(dir, "vpn-test-ca.crt")
-            val writer = java.io.OutputStreamWriter(java.io.FileOutputStream(file))
-            writer.write("-----BEGIN CERTIFICATE-----\n")
-            writer.write(Base64.encodeToString(cert.encoded, Base64.DEFAULT))
-            writer.write("-----END CERTIFICATE-----\n")
-            writer.close()
-            file.setReadable(true, false)
-            file
-        } catch (_: Exception) { null }
+            if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.Q) {
+                // Android 10+: use MediaStore for Downloads
+                val values = android.content.ContentValues().apply {
+                    put(android.provider.MediaStore.Downloads.DISPLAY_NAME, "vpn-test-ca.crt")
+                    put(android.provider.MediaStore.Downloads.MIME_TYPE, "application/x-x509-ca-cert")
+                    put(android.provider.MediaStore.Downloads.IS_PENDING, 1)
+                }
+                val resolver = context.contentResolver
+                val uri = resolver.insert(android.provider.MediaStore.Downloads.EXTERNAL_CONTENT_URI, values)
+                if (uri != null) {
+                    resolver.openOutputStream(uri)?.use { it.write(pem.toByteArray()) }
+                    values.clear()
+                    values.put(android.provider.MediaStore.Downloads.IS_PENDING, 0)
+                    resolver.update(uri, values, null, null)
+                }
+                // Return a file for the toast path
+                File(android.os.Environment.getExternalStoragePublicDirectory(
+                    android.os.Environment.DIRECTORY_DOWNLOADS), "vpn-test-ca.crt")
+            } else {
+                val dir = android.os.Environment.getExternalStoragePublicDirectory(
+                    android.os.Environment.DIRECTORY_DOWNLOADS)
+                dir.mkdirs()
+                val file = File(dir, "vpn-test-ca.crt")
+                file.writeText(pem)
+                file.setReadable(true, false)
+                file
+            }
+        } catch (e: Exception) {
+            android.util.Log.e("HttpsCertManager", "export failed", e)
+            null
+        }
     }
 
     private fun generateRSAKeyPair(): KeyPair {

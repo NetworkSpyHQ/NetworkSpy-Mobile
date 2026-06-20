@@ -280,32 +280,20 @@ class MainActivity : Activity() {
     private fun installCACert() {
         HttpsCertManager.ensureInitialized(this)
         val certFile = HttpsCertManager.exportCAPEM(this)
-        if (certFile == null || !certFile.exists()) {
+        if (certFile == null) {
             Toast.makeText(this, "Failed to export CA certificate", Toast.LENGTH_LONG).show()
             return
         }
-        appendLog("CA cert exported to ${certFile.absolutePath}")
-
-        // Also open file with a share/send intent for easy access
+        appendLog("CA cert saved to Downloads/vpn-test-ca.crt")
+        Toast.makeText(this,
+            "CA cert saved to Downloads.\n" +
+            "Go to: Settings → Security → Encryption & credentials\n" +
+            "→ Install a certificate → CA certificate\n" +
+            "→ Select vpn-test-ca.crt",
+            Toast.LENGTH_LONG).show()
         try {
-            val uri = androidx.core.content.FileProvider.getUriForFile(
-                this, "$packageName.fileprovider", certFile)
-            val shareIntent = android.content.Intent(android.content.Intent.ACTION_SEND).apply {
-                type = "application/x-x509-ca-cert"
-                putExtra(android.content.Intent.EXTRA_STREAM, uri)
-                addFlags(android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION)
-            }
-            startActivity(android.content.Intent.createChooser(shareIntent, "Install CA cert via..."))
-        } catch (_: Exception) {
-            // Fallback: just open security settings
-            try {
-                startActivity(android.content.Intent(android.provider.Settings.ACTION_SECURITY_SETTINGS))
-                Toast.makeText(this,
-                    "Cert: ${certFile.absolutePath}\n" +
-                    "Settings → Encryption & credentials → Install certificate → CA certificate",
-                    Toast.LENGTH_LONG).show()
-            } catch (_: Exception) {}
-        }
+            startActivity(android.content.Intent(android.provider.Settings.ACTION_SECURITY_SETTINGS))
+        } catch (_: Exception) {}
     }
 
     private fun prepareAndStartVpn() {
