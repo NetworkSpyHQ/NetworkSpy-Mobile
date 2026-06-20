@@ -89,6 +89,7 @@ class MainActivity : Activity() {
     }
 
     private fun stopVpn() {
+        VpnTestService.activeService?.stopVpn()
         val intent = Intent(this, VpnTestService::class.java)
         stopService(intent)
         updateUI(false)

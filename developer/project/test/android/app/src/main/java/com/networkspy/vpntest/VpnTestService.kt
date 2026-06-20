@@ -19,6 +19,7 @@ class VpnTestService : VpnService() {
         private const val CHANNEL_ID = "vpn_test_channel"
 
         @Volatile var isRunning = false
+        @Volatile var activeService: VpnTestService? = null
 
         var listener: ((String) -> Unit)? = null
 
@@ -48,6 +49,7 @@ class VpnTestService : VpnService() {
 
     override fun onCreate() {
         super.onCreate()
+        activeService = this
         createNotificationChannel()
         jni_init()
         Log.i(TAG, "Service created, native lib initialized")
@@ -139,6 +141,7 @@ class VpnTestService : VpnService() {
     override fun onDestroy() {
         stopVpn()
         jni_done()
+        activeService = null
         super.onDestroy()
     }
 
