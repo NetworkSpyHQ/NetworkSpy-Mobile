@@ -32,6 +32,25 @@ class CaptureVpnService : VpnService() {
         const val CHANNEL_ID = "vpn_capture"
         const val PROXY_PORT = 8888
 
+        // Set to false to disable all VPN logging
+        private const val DEBUG = true
+
+        private fun log(level: Int, msg: String, tr: Throwable? = null) {
+            if (!DEBUG) return
+            when (level) {
+                Log.DEBUG -> Log.d(TAG, msg, tr)
+                Log.INFO -> Log.i(TAG, msg, tr)
+                Log.WARN -> Log.w(TAG, msg, tr)
+                Log.ERROR -> Log.e(TAG, msg, tr)
+                Log.VERBOSE -> Log.v(TAG, msg, tr)
+            }
+        }
+
+        private fun logd(msg: String) = log(Log.DEBUG, msg)
+        private fun logi(msg: String) = log(Log.INFO, msg)
+        private fun logw(msg: String) = log(Log.WARN, msg)
+        private fun loge(msg: String, tr: Throwable? = null) = log(Log.ERROR, msg, tr)
+
         @Volatile var isRunning = false
         private var activeService: CaptureVpnService? = null
 
@@ -68,7 +87,7 @@ class CaptureVpnService : VpnService() {
 
     private fun startVpn() {
         if (isRunning) return
-        Log.d(TAG, "Starting VPN")
+        logd("Starting VPN")
 
         try {
             vpnInterface = Builder()
@@ -104,12 +123,12 @@ class CaptureVpnService : VpnService() {
         VpnModule.emitStatus("started")
 
         executor.execute { packetLoop(vpnInterface!!) }
-        Log.d(TAG, "VPN started with packet forwarding")
+        logd("VPN started with packet forwarding")
     }
 
     private fun stopVpn() {
         if (!isRunning) return
-        Log.d(TAG, "Stopping VPN")
+        logd("Stopping VPN")
         isRunning = false
 
         try { vpnInterface?.close() } catch (_: Exception) {}
@@ -142,13 +161,13 @@ class CaptureVpnService : VpnService() {
                 try {
                     handlePacket(buffer, len)
                 } catch (e: Exception) {
-                    Log.e(TAG, "Packet error: ${e.message}")
+                    loge("Packet error: ${e.message}")
                 }
             }
         } catch (e: Exception) {
-            if (isRunning) Log.e(TAG, "Loop error: ${e.message}")
+            if (isRunning) loge("Loop error: ${e.message}")
         } finally {
-            Log.d(TAG, "Packet loop ended. $count packets")
+            logd("Packet loop ended. $count packets")
         }
     }
 

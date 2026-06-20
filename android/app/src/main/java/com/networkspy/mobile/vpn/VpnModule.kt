@@ -22,6 +22,12 @@ class VpnModule(reactContext: ReactApplicationContext) : ReactContextBaseJavaMod
         private var instance: VpnModule? = null
         private var pendingPromise: Promise? = null
 
+        private const val DEBUG = true
+
+        private fun log(msg: String) {
+            if (DEBUG) Log.d("VpnModule", msg)
+        }
+
         fun emitStatus(status: String) {
             val map = Arguments.createMap().apply { putString("status", status) }
             instance?.sendEvent("VpnStatus", map)
@@ -83,13 +89,13 @@ class VpnModule(reactContext: ReactApplicationContext) : ReactContextBaseJavaMod
 
     @ReactMethod
     fun startVpn() {
-        Log.d("VpnModule", "startVpn called from JS")
+        log("startVpn called from JS")
         CaptureVpnService.start(reactApplicationContext)
     }
 
     @ReactMethod
     fun stopVpn() {
-        Log.d("VpnModule", "stopVpn called from JS")
+        log("stopVpn called from JS")
         CaptureVpnService.stop(reactApplicationContext)
     }
 

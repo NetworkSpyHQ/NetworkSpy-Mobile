@@ -22,6 +22,24 @@ class HttpCaptureProxy(
 ) {
     companion object {
         const val TAG = "HttpCaptureProxy"
+
+        private const val DEBUG = true
+
+        private fun log(level: Int, msg: String, tr: Throwable? = null) {
+            if (!DEBUG) return
+            when (level) {
+                Log.DEBUG -> Log.d(TAG, msg, tr)
+                Log.INFO -> Log.i(TAG, msg, tr)
+                Log.WARN -> Log.w(TAG, msg, tr)
+                Log.ERROR -> Log.e(TAG, msg, tr)
+                Log.VERBOSE -> Log.v(TAG, msg, tr)
+            }
+        }
+
+        private fun logd(msg: String) = log(Log.DEBUG, msg)
+        private fun logi(msg: String) = log(Log.INFO, msg)
+        private fun logw(msg: String) = log(Log.WARN, msg)
+        private fun loge(msg: String, tr: Throwable? = null) = log(Log.ERROR, msg, tr)
     }
 
     private var serverSocket: ServerSocket? = null
@@ -34,18 +52,18 @@ class HttpCaptureProxy(
         executor.execute {
             try {
                 serverSocket = ServerSocket(port, 50, java.net.InetAddress.getByName("127.0.0.1"))
-                Log.d(TAG, "Proxy listening on 127.0.0.1:$port")
+                logd("Proxy listening on 127.0.0.1:$port")
 
                 while (running) {
                     try {
                         val client = serverSocket?.accept() ?: continue
                         executor.execute { handleClient(client) }
                     } catch (e: Exception) {
-                        if (running) Log.e(TAG, "Accept error: ${e.message}")
+                        if (running) loge("Accept error: ${e.message}")
                     }
                 }
             } catch (e: Exception) {
-                Log.e(TAG, "Server socket error: ${e.message}")
+                loge("Server socket error: ${e.message}")
             }
         }
     }
@@ -74,7 +92,7 @@ class HttpCaptureProxy(
                 val method = parts[0].uppercase()
                 val target = parts[1]
 
-                Log.d(TAG, "Proxy request: $method $target")
+                logd("Proxy request: $method $target")
 
                 if (method == "CONNECT") {
                     handleConnect(target, sock, input, output)
@@ -83,7 +101,7 @@ class HttpCaptureProxy(
                 }
             }
         } catch (e: Exception) {
-            if (running) Log.e(TAG, "Client handler error: ${e.message}")
+            if (running) loge("Client handler error: ${e.message}")
         }
     }
 
