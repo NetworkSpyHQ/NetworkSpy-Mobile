@@ -213,12 +213,13 @@ export default function TrafficListScreen() {
     };
   }, []);
 
-  const toggleCapture = useCallback(() => {
+  const toggleCapture = useCallback(async () => {
     if (capturing) {
       stopVpn();
       setCapturing(false);
     } else {
-      startVpn();
+      setCapturing(true);
+      await startVpn();
     }
   }, [capturing]);
 

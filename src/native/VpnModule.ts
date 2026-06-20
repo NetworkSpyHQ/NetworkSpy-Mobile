@@ -1,4 +1,4 @@
-import { NativeModules, NativeEventEmitter, Platform } from 'react-native';
+import { NativeModules, NativeEventEmitter, Platform, Alert } from 'react-native';
 import type { TrafficEntry } from '@/types/traffic';
 
 type VpnStatusCallback = (status: string) => void;
@@ -6,6 +6,7 @@ type TrafficCallback = (entry: TrafficEntry) => void;
 type VpnErrorCallback = (error: string) => void;
 
 interface VpnModuleNative {
+  prepareVpn(): Promise<boolean>;
   startVpn(): void;
   stopVpn(): void;
   isVpnRunning(): Promise<boolean>;
@@ -15,16 +16,24 @@ const VpnNative: VpnModuleNative | null =
   Platform.OS === 'android' ? NativeModules.VpnModule : null;
 
 let eventEmitter: NativeEventEmitter | null = null;
-let statusSub: any = null;
-let trafficSub: any = null;
-let errorSub: any = null;
 
 if (VpnNative) {
   eventEmitter = new NativeEventEmitter(NativeModules.VpnModule);
 }
 
-export function startVpn(): void {
-  VpnNative?.startVpn();
+export async function startVpn(): Promise<void> {
+  if (!VpnNative) return;
+
+  try {
+    const granted = await VpnNative.prepareVpn();
+    if (granted) {
+      VpnNative.startVpn();
+    } else {
+      Alert.alert('VPN Permission', 'VPN permission is required to capture traffic.');
+    }
+  } catch (e: any) {
+    Alert.alert('Error', `Failed to prepare VPN: ${e.message}`);
+  }
 }
 
 export function stopVpn(): void {
@@ -40,19 +49,17 @@ export function onVpnStatus(callback: VpnStatusCallback): () => void {
   if (!eventEmitter) {
     return () => {};
   }
-  statusSub = eventEmitter.addListener('VpnStatus', (event: { status: string }) => {
+  const sub = eventEmitter.addListener('VpnStatus', (event: { status: string }) => {
     callback(event.status);
   });
-  return () => {
-    statusSub?.remove();
-  };
+  return () => sub.remove();
 }
 
 export function onTrafficCapture(callback: TrafficCallback): () => void {
   if (!eventEmitter) {
     return () => {};
   }
-  trafficSub = eventEmitter.addListener('TrafficCapture', (event: { payload: string }) => {
+  const sub = eventEmitter.addListener('TrafficCapture', (event: { payload: string }) => {
     try {
       const entry: TrafficEntry = JSON.parse(event.payload);
       callback(entry);
@@ -60,19 +67,15 @@ export function onTrafficCapture(callback: TrafficCallback): () => void {
       console.warn('Failed to parse traffic payload:', e);
     }
   });
-  return () => {
-    trafficSub?.remove();
-  };
+  return () => sub.remove();
 }
 
 export function onVpnError(callback: VpnErrorCallback): () => void {
   if (!eventEmitter) {
     return () => {};
   }
-  errorSub = eventEmitter.addListener('VpnError', (event: { message: string }) => {
+  const sub = eventEmitter.addListener('VpnError', (event: { message: string }) => {
     callback(event.message);
   });
-  return () => {
-    errorSub?.remove();
-  };
+  return () => sub.remove();
 }
