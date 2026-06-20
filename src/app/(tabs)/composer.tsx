@@ -84,29 +84,24 @@ function ComposeRow({ entry, asyncMode, onFire }: { entry: ComposeEntry; asyncMo
           </ThemedText>
         </View>
       </View>
-      <View style={styles.rowRight}>
-        {sending ? (
+      {sending ? (
+        <View style={styles.rowRight}>
           <ActivityIndicator size="small" color="#3B82F6" />
-        ) : lastResult ? (
-          <Pressable
-            onPress={(e) => { e.stopPropagation(); setLastResult(null); }}
-            style={[
-              styles.resultButton,
-              { backgroundColor: lastResult.code === 0 ? '#EF4444' : lastResult.code >= 400 ? '#F59E0B' : '#22C55E' },
-            ]}
-          >
-            <ThemedText
-              type="small"
-              style={{
-                color: '#FFFFFF',
-                fontFamily: Platform.select({ ios: 'ui-monospace', default: 'monospace' }),
-                fontWeight: '700',
-              }}
-            >
-              {lastResult.code || 'ERR'}
-            </ThemedText>
-          </Pressable>
-        ) : (
+        </View>
+      ) : lastResult ? (
+        <Pressable
+          onPress={(e) => { e.stopPropagation(); setLastResult(null); }}
+          style={[
+            styles.resultButton,
+            { backgroundColor: lastResult.code === 0 ? '#EF4444' : lastResult.code >= 400 ? '#F59E0B' : '#22C55E' },
+          ]}
+        >
+          <Text style={styles.resultText}>
+            {lastResult.code || 'ERR'}
+          </Text>
+        </Pressable>
+      ) : (
+        <View style={styles.rowRight}>
           <Pressable
             style={({ pressed }) => [styles.playButton, pressed && styles.playButtonPressed]}
             onPress={(e) => { e.stopPropagation(); handleSend(); }}
@@ -114,8 +109,8 @@ function ComposeRow({ entry, asyncMode, onFire }: { entry: ComposeEntry; asyncMo
           >
             <Text style={styles.playButtonText}>▶</Text>
           </Pressable>
-        )}
-      </View>
+        </View>
+      )}
     </Pressable>
   );
 }
@@ -355,15 +350,22 @@ const styles = StyleSheet.create({
     marginLeft: 2,
   },
   resultButton: {
-    alignSelf: 'stretch',
+    position: 'absolute',
+    top: 0,
+    right: 0,
+    bottom: 0,
     justifyContent: 'center',
     alignItems: 'center',
-    paddingHorizontal: Spacing.two + 2,
-    marginVertical: -Spacing.two - 2,
-    marginRight: -Spacing.three,
-    borderTopLeftRadius: Spacing.two,
-    borderBottomLeftRadius: Spacing.two,
-    minWidth: 48,
+    paddingHorizontal: Spacing.three,
+    borderTopRightRadius: 0,
+    borderBottomRightRadius: 0,
+    minWidth: 60,
+  },
+  resultText: {
+    color: '#FFFFFF',
+    fontSize: 13,
+    fontWeight: '700',
+    fontFamily: Platform.select({ ios: 'ui-monospace', default: 'monospace' }),
   },
   methodBadge: {
     paddingHorizontal: 6,
