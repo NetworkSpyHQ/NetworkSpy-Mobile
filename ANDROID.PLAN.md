@@ -1,11 +1,15 @@
-# ANDROID.PLAN.md — Standalone VPN Library Development & Test Project
+# ANDROID.PLAN.md — Shared VPN Library + Test Project
 
 ## Goal
 
-Develop the VPN packet-forwarding C library (`libvpn`) in isolation using a
-lightweight native Android project. Decouple VPN testing from the main Expo
-app so iteration is fast and unaffected by JS build times, Expo tooling, or
-React Native overhead.
+Build the VPN packet-forwarding C library (`libvpn`) as a **standalone shared
+module** that can be imported by both:
+
+1. **Test project** (`developer/project/test/android/`) — lightweight native
+   Android app for fast VPN development and debugging
+2. **Main RN app** (`android/`) — the Expo/React Native production app
+
+The C library lives in one place (`library/vpn/`), both projects reference it.
 
 ---
 
@@ -13,43 +17,171 @@ React Native overhead.
 
 ```
 networkspy-mobile/
+├── library/
+│   └── vpn/                                ← SHARED C library (single source of truth)
+│       ├── CMakeLists.txt
+│       ├── include/
+│       │   └── vpn.h                        ← public API header
+│       └── src/
+│           ├── jni.c                        ← JNI entry points
+│           ├── ip.c
+│           ├── tcp.c
+│           ├── udp.c
+│           ├── dns.c
+│           ├── session.c
+│           └── util.c
+│
 ├── developer/
 │   └── project/
 │       └── test/
-│           └── android/                    ← NEW: standalone test project
+│           └── android/                    ← lightweight test app
 │               ├── app/
 │               │   ├── build.gradle.kts
-│               │   └── src/
-│               │       └── main/
-│               │           ├── AndroidManifest.xml
-│               │           ├── java/com/networkspy/vpntest/
-│               │           │   ├── MainActivity.kt         ← single screen
-│               │           │   └── VpnTestService.kt       ← test VPN service
-│               │           ├── cpp/                         ← C library (same as production)
-│               │           │   ├── jni.c
-│               │           │   ├── ip.c / ip.h
-│               │           │   ├── tcp.c / tcp.h
-│               │           │   ├── udp.c / udp.h
-│               │           │   ├── dns.c / dns.h
-│               │           │   ├── session.c / session.h
-│               │           │   ├── util.c / util.h
-│               │           │   └── vpn.h                    ← shared header
-│               │           └── res/
-│               │               ├── layout/activity_main.xml
-│               │               └── values/strings.xml
-│               ├── CMakeLists.txt
-│               ├── build.gradle.kts          ← root
+│               │   ├── CMakeLists.txt       ← references ../../../../library/vpn/CMakeLists.txt
+│               │   └── src/main/
+│               │       ├── AndroidManifest.xml
+│               │       ├── java/com/networkspy/vpntest/
+│               │       │   ├── MainActivity.kt
+│               │       │   └── VpnTestService.kt
+│               │       └── res/layout/activity_main.xml
+│               ├── build.gradle.kts
 │               ├── settings.gradle.kts
 │               └── gradle.properties
 │
-├── android/                                  ← main Expo app (separate)
+├── android/                                ← main Expo app (separate)
+│   └── app/
+│       ├── build.gradle                     ← references ../../library/vpn/CMakeLists.txt
+│       └── CMakeLists.txt
+│
 ├── PLAN.md
-└── ANDROID.PLAN.md                           ← this file
+└── ANDROID.PLAN.md
 ```
 
 ---
 
-## Why a Separate Project
+## The Shared Library (`library/vpn/`)
+
+The library is a **self-contained CMake project**. It produces `libvpn.so`.
+It has NO dependency on React Native, Expo, or any Java/Kotlin framework.
+
+### `library/vpn/CMakeLists.txt`
+
+```cmake
+cmake_minimum_required(VERSION 3.10.2)
+project("vpn" C)
+
+set(CMAKE_C_STANDARD 11)
+
+add_library(vpn SHARED
+    src/jni.c
+    src/ip.c
+    src/tcp.c
+    src/udp.c
+    src/dns.c
+    src/session.c
+    src/util.c
+)
+
+target_include_directories(vpn PRIVATE include)
+
+find_library(log-lib log)
+target_link_libraries(vpn ${log-lib})
+```
+
+### `library/vpn/include/vpn.h`
+
+Single public header that both the test project and main app include:
+- Context struct (`vpn_context_t`)
+- Session struct (`tcp_session_t`)
+- Logging macros
+- JNI helper macros (`PROTECT_SOCKET`, etc.)
+
+---
+
+## How Each Project Imports the Library
+
+Both projects use CMake's `add_subdirectory()` to include the shared library.
+
+### Test Project: `developer/project/test/android/app/CMakeLists.txt`
+
+```cmake
+cmake_minimum_required(VERSION 3.10.2)
+
+# Import the shared VPN library
+add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/../../../../../library/vpn
+                 ${CMAKE_CURRENT_BINARY_DIR}/vpn)
+```
+
+That's it. The library compiles into the test APK. No file copying.
+
+### Main App: `android/app/CMakeLists.txt`
+
+```cmake
+cmake_minimum_required(VERSION 3.10.2)
+
+# Import the shared VPN library
+add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/../../library/vpn
+                 ${CMAKE_CURRENT_BINARY_DIR}/vpn)
+```
+
+Same pattern. The main app's `CaptureVpnService.kt` loads `System.loadLibrary("vpn")`.
+
+---
+
+## JNI Entry Points (shared across both projects)
+
+The JNI function names match the **class that calls them**. Each project has
+a different class, so the JNI names differ:
+
+| Function | Test Project | Main App |
+|----------|-------------|----------|
+| `jni_init` | `Java_com_networkspy_vpntest_VpnTestService_jni_1init` | `Java_com_networkspy_mobile_vpn_CaptureVpnService_jni_1init` |
+| `jni_start` | `Java_com_networkspy_vpntest_VpnTestService_jni_1start` | `Java_com_networkspy_mobile_vpn_CaptureVpnService_jni_1start` |
+| `jni_stop` | `Java_com_networkspy_vpntest_VpnTestService_jni_1stop` | `Java_com_networkspy_mobile_vpn_CaptureVpnService_jni_1stop` |
+| `jni_get_mtu` | `Java_com_networkspy_vpntest_VpnTestService_jni_1get_1mtu` | `Java_com_networkspy_mobile_vpn_CaptureVpnService_jni_1get_1mtu` |
+| `jni_done` | `Java_com_networkspy_vpntest_VpnTestService_jni_1done` | `Java_com_networkspy_mobile_vpn_CaptureVpnService_jni_1done` |
+
+**Solution**: Use JNI `RegisterNatives` instead of auto-naming. This decouples
+the C code from Java package names:
+
+```c
+// library/vpn/src/jni.c
+
+static JNINativeMethod methods[] = {
+    {"jni_init",     "()V",     (void*)vpn_init},
+    {"jni_start",    "(IZILjava/lang/String;I)V", (void*)vpn_start},
+    {"jni_stop",     "(I)V",    (void*)vpn_stop},
+    {"jni_get_mtu",  "()I",     (void*)vpn_get_mtu},
+    {"jni_done",     "()V",     (void*)vpn_done},
+};
+
+JNIEXPORT jint JNICALL JNI_OnLoad(JavaVM *vm, void *reserved) {
+    JNIEnv *env;
+    if ((*vm)->GetEnv(vm, (void**)&env, JNI_VERSION_1_6) != JNI_OK)
+        return JNI_ERR;
+
+    // Register for BOTH class names — call once for each
+    jclass cls_test = (*env)->FindClass(env, "com/networkspy/vpntest/VpnTestService");
+    jclass cls_main = (*env)->FindClass(env, "com/networkspy/mobile/vpn/CaptureVpnService");
+
+    if (cls_test)
+        (*env)->RegisterNatives(env, cls_test, methods, sizeof(methods)/sizeof(methods[0]));
+    if (cls_main)
+        (*env)->RegisterNatives(env, cls_main, methods, sizeof(methods)/sizeof(methods[0]));
+
+    return JNI_VERSION_1_6;
+}
+```
+
+This way the same `libvpn.so` works for both projects with zero changes.
+The C functions (`vpn_init`, `vpn_start`, etc.) are just regular C functions
+without JNI name mangling.
+
+---
+
+## Test Project Setup
+
+### Why a Separate Project
 
 | Aspect | Full Expo App | Standalone Test Project |
 |--------|--------------|------------------------|
@@ -60,11 +192,7 @@ networkspy-mobile/
 | Dependencies | Expo, RN, Nitro, 100+ packages | Zero — pure Android |
 | APK size | 30+ MB | < 5 MB |
 
----
-
-## Test Project Structure
-
-### 1. Root `build.gradle.kts`
+### Root `build.gradle.kts`
 
 ```kotlin
 // developer/project/test/android/build.gradle.kts
@@ -74,20 +202,17 @@ plugins {
 }
 ```
 
-### 2. Root `settings.gradle.kts`
+### Root `settings.gradle.kts`
 
 ```kotlin
 pluginManagement {
-    repositories {
-        google()
-        mavenCentral()
-    }
+    repositories { google(); mavenCentral() }
 }
 rootProject.name = "VpnTest"
 include(":app")
 ```
 
-### 3. App `build.gradle.kts`
+### `app/build.gradle.kts`
 
 ```kotlin
 plugins {
@@ -114,24 +239,7 @@ android {
 }
 ```
 
-### 4. `app/CMakeLists.txt`
-
-```cmake
-cmake_minimum_required(VERSION 3.10.2)
-add_library(vpn SHARED
-    src/main/cpp/jni.c
-    src/main/cpp/ip.c
-    src/main/cpp/tcp.c
-    src/main/cpp/udp.c
-    src/main/cpp/dns.c
-    src/main/cpp/session.c
-    src/main/cpp/util.c
-)
-find_library(log-lib log)
-target_link_libraries(vpn ${log-lib})
-```
-
-### 5. `app/src/main/AndroidManifest.xml`
+### `app/src/main/AndroidManifest.xml`
 
 ```xml
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
@@ -139,10 +247,9 @@ target_link_libraries(vpn ${log-lib})
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
 
-    <application android:allowBackup="true" android:label="VPN Test">
-        <activity android:name=".MainActivity"
-            android:exported="true"
-            android:theme="@style/Theme.AppCompat.Light">
+    <application android:allowBackup="true" android:label="VPN Test"
+        android:theme="@style/Theme.AppCompat.Light">
+        <activity android:name=".MainActivity" android:exported="true">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
@@ -161,61 +268,7 @@ target_link_libraries(vpn ${log-lib})
 </manifest>
 ```
 
-### 6. `MainActivity.kt` — Simple Test UI
-
-```kotlin
-class MainActivity : AppCompatActivity() {
-    private lateinit var btnStart: Button
-    private lateinit var btnStop: Button
-    private lateinit var tvStatus: TextView
-    private lateinit var tvLog: TextView
-
-    override fun onCreate(savedInstanceState: Bundle?) {
-        super.onCreate(savedInstanceState)
-        setContentView(R.layout.activity_main)
-
-        btnStart = findViewById(R.id.btn_start)
-        btnStop = findViewById(R.id.btn_stop)
-        tvStatus = findViewById(R.id.tv_status)
-        tvLog = findViewById(R.id.tv_log)
-
-        btnStart.setOnClickListener { startVpn() }
-        btnStop.setOnClickListener { stopVpn() }
-    }
-
-    private fun startVpn() {
-        val intent = VpnService.prepare(this)
-        if (intent != null) {
-            startActivityForResult(intent, 1)
-        } else {
-            onActivityResult(1, RESULT_OK, null)
-        }
-    }
-
-    override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
-        if (requestCode == 1 && resultCode == RESULT_OK) {
-            startService(Intent(this, VpnTestService::class.java))
-            tvStatus.text = "VPN: RUNNING"
-        }
-    }
-
-    private fun stopVpn() {
-        stopService(Intent(this, VpnTestService::class.java))
-        tvStatus.text = "VPN: STOPPED"
-    }
-}
-```
-
-**Layout** (`res/layout/activity_main.xml`):
-```
-LinearLayout (vertical)
-├── Button "Start VPN"
-├── Button "Stop VPN"
-├── TextView (status)
-└── ScrollView > TextView (log output — append from logcat listener)
-```
-
-### 7. `VpnTestService.kt` — Minimal VPN Service
+### `VpnTestService.kt`
 
 ```kotlin
 class VpnTestService : VpnService() {
@@ -236,11 +289,6 @@ class VpnTestService : VpnService() {
         super.onCreate()
         jni_init()
         startForeground(1, buildNotification())
-    }
-
-    override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-        startVpn()
-        return START_STICKY
     }
 
     private fun startVpn() {
@@ -264,150 +312,44 @@ class VpnTestService : VpnService() {
         super.onDestroy()
     }
 
-    override fun onRevoke() {
-        stopSelf()
-        super.onRevoke()
-    }
+    override fun onRevoke() { stopSelf(); super.onRevoke() }
 }
 ```
 
----
+### `MainActivity.kt`
 
-## C Library Development
-
-### File List
-
-| File | Purpose |
-|------|---------|
-| `vpn.h` | Shared types, constants, logging macros |
-| `jni.c` | JNI entry points (`jni_init`, `jni_start`, `jni_stop`) |
-| `ip.c` | IP header parsing, TUN reader loop |
-| `tcp.c` | TCP state machine, socket creation, bidirectional pipe |
-| `udp.c` | UDP forwarding with response writeback |
-| `dns.c` | DNS query parsing, caching, forwarding |
-| `session.c` | Connection hash table, cleanup |
-| `util.c` | Checksums, byte ordering, IP string formatting |
-
-### Key Types (`vpn.h`)
-
-```c
-typedef struct {
-    JNIEnv *env;
-    jobject instance;
-    jmethodID mid_protect;
-    int tun_fd;
-    int shutdown;
-    // proxy config
-    char proxy_host[64];
-    int proxy_port;
-} vpn_context_t;
-
-typedef struct {
-    uint32_t src_ip, dst_ip;
-    uint16_t src_port, dst_port;
-    int socket_fd;
-    int state;       // 0=NEW, 1=CONNECTING, 2=CONNECTED, 3=CLOSING
-    uint32_t seq_client;
-    uint32_t seq_server;
-    time_t created;
-    uint64_t tx, rx;
-} tcp_session_t;
-```
-
-### JNI Entry Points (`jni.c`)
-
-```c
-JNIEXPORT void JNICALL
-Java_com_networkspy_vpntest_VpnTestService_jni_1init(JNIEnv *env, jobject instance) {
-    // Save JNI references globally
-    g_ctx.env = env;
-    g_ctx.instance = (*env)->NewGlobalRef(env, instance);
-    // Get protect() method ID
-    jclass cls = (*env)->GetObjectClass(env, instance);
-    g_ctx.mid_protect = (*env)->GetMethodID(env, cls, "protect", "(I)Z");
-    // Initialize session table, DNS cache
-}
-
-JNIEXPORT void JNICALL
-Java_com_networkspy_vpntest_VpnTestService_jni_1start(
-    JNIEnv *env, jobject instance, jint tun, jboolean fwd53,
-    jint rcode, jstring proxy_ip, jint proxy_port) {
-
-    g_ctx.tun_fd = tun;
-    // Parse proxy config
-    // Spawn TUN reader thread
-    pthread_create(&g_tun_thread, NULL, tun_reader, NULL);
-}
-
-JNIEXPORT void JNICALL
-Java_com_networkspy_vpntest_VpnTestService_jni_1stop(
-    JNIEnv *env, jobject instance, jint tun) {
-
-    g_ctx.shutdown = 1;
-    close(tun); // Unblock reader thread
-    pthread_join(g_tun_thread, NULL);
-    // Clean up sessions
-}
-```
-
-### Socket Protection
-
-Every socket created in C must be protected via JNI callback:
-
-```c
-static int protect_socket(int fd) {
-    JNIEnv *env;
-    (*g_jvm)->AttachCurrentThread(g_jvm, &env, NULL);
-    jboolean ok = (*env)->CallBooleanMethod(env, g_ctx.instance,
-                                             g_ctx.mid_protect, fd);
-    (*g_jvm)->DetachCurrentThread(g_jvm);
-    return ok ? 0 : -1;
-}
-```
-
-Called immediately after `socket()` and before `connect()`/`bind()`.
-
-### Build & Run
-
-```bash
-cd developer/project/test/android
-
-# Build
-./gradlew :app:assembleDebug
-
-# Install & run
-adb install app/build/outputs/apk/debug/app-debug.apk
-
-# Watch logs
-adb logcat -s VpnTest:V vpn:V
-```
+Simple UI with Start/Stop buttons, status text, scrollable log output.
 
 ---
 
 ## Development Workflow
 
-1. **Write C code** in `app/src/main/cpp/`
-2. **Build**: `./gradlew :app:assembleDebug` (10-30 seconds)
+1. **Edit C code** in `library/vpn/src/`
+2. **Build test app**: `cd developer/project/test/android && ./gradlew :app:assembleDebug`
 3. **Install**: `adb install -r app/build/outputs/apk/debug/app-debug.apk`
 4. **Test**: Tap Start VPN → browse web → verify internet works
-5. **Debug**: `adb logcat -s VpnTest:V vpn:V` for packet-level logs
-6. **Iterate**: Fix C code, rebuild, reinstall (fast cycle)
+5. **Watch logs**: `adb logcat -s VpnTest:V vpn:V`
+6. **Iterate**: Fix C code → rebuild (10-30s) → reinstall
 
-Once the C library works reliably in the test project, **copy the `.c`/`.h`
-files** to the main app's `android/app/src/main/cpp/` and update the
-Kotlin service to match.
+### Transfer to Main App
+
+Once the library works in the test project:
+
+1. No code changes needed — the library is already shared
+2. Update `android/app/build.gradle` to include CMake if not already present
+3. Update `CaptureVpnService.kt` with the same `external fun` declarations
+4. Build main app: `npx expo run:android`
+
+The library compiles into both APKs from the same source.
 
 ---
 
 ## Success Criteria
 
-- [ ] Start VPN → internet works (websites load, DNS resolves)
-- [ ] TCP connections succeed (multiple concurrent)
-- [ ] UDP forwarding works (DNS, QUIC)
-- [ ] VPN stop → internet works normally
-- [ ] No crashes after 10 minutes of active browsing
-- [ ] Memory stable (no OOM from connection leaks)
-- [ ] Logs show proper packet flow: SYN → SYN-ACK → data → FIN
+- [ ] VPN starts → internet works (TCP + UDP + DNS)
+- [ ] VPN stops → internet works normally (no residual routes)
+- [ ] No crashes after 10 minutes of browsing
+- [ ] Memory stable (no OOM, no connection leaks)
+- [ ] Logs show proper packet flow in both test and main app
+- [ ] Same `libvpn.so` works in both projects without modification
 
-Once all criteria are met, the C library is ready for integration into the
-main Expo app.
