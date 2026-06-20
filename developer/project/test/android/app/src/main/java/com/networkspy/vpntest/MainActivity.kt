@@ -36,7 +36,9 @@ class MainActivity : Activity() {
         val url: String,
         val host: String,
         val status: Int,
-        val contentType: String
+        val contentType: String,
+        val headers: String,
+        val bodyHex: String
     )
 
     private val captureEntries = mutableListOf<CaptureEntry>()
@@ -179,21 +181,56 @@ class MainActivity : Activity() {
         var host = ""
         var status = 0
         var contentType = ""
+        var headersHex = ""
+        var bodyHex = ""
 
-        val pairs = json.removeSurrounding("{", "}").split(",")
-        for (pair in pairs) {
-            val kv = pair.split(":", limit = 2)
-            if (kv.size < 2) continue
-            val key = kv[0].trim().removeSurrounding("\"")
-            val value = kv[1].trim().removeSurrounding("\"").removeSuffix("\"")
+        val pairs = json.removeSurrounding("{", "}").replace("\\\\\"", "'").split("\",") .joinToString("\n").split(",\"") .joinToString("\n").split(",")
+        val tokens = json.removeSurrounding("{", "}").split(",\"")
+        for (token in tokens) {
+            val clean = token.trim().removeSurrounding("\"")
+            val colon = clean.indexOf(':')
+            if (colon < 0) continue
+            val key = clean.substring(0, colon).trim().removeSurrounding("\"")
+            val value = clean.substring(colon + 1).trim().removeSurrounding("\"")
+
             when (key) {
                 "id" -> id = value.toIntOrNull() ?: 0
                 "type" -> type = value
-                "method" -> method = value
-                "url" -> url = value
-                "host" -> host = value
-                "status" -> status = value.toIntOrNull() ?: 0
-                "contentType" -> contentType = value
+                "hdr_hex" -> headersHex = value
+                "body_hex" -> bodyHex = value
+            }
+
+            if (type == "request") {
+                val headerText = hexToString(headersHex)
+                val lines = headerText.split("\r\n")
+                if (lines.isNotEmpty()) {
+                    val firstLine = lines[0].split(" ")
+                    if (firstLine.size >= 2) {
+                        method = firstLine[0]
+                        url = firstLine[1]
+                    }
+                }
+                for (line in lines) {
+                    if (line.lowercase().startsWith("host:")) {
+                        host = line.substring(5).trim()
+                    }
+                }
+            }
+
+            if (type == "response") {
+                val headerText = hexToString(headersHex)
+                val lines = headerText.split("\r\n")
+                if (lines.isNotEmpty()) {
+                    val firstLine = lines[0].split(" ")
+                    if (firstLine.size >= 2) {
+                        status = firstLine[1].toIntOrNull() ?: 0
+                    }
+                }
+                for (line in lines) {
+                    if (line.lowercase().startsWith("content-type:")) {
+                        contentType = line.substring(13).trim()
+                    }
+                }
             }
         }
 
@@ -203,26 +240,40 @@ class MainActivity : Activity() {
         if (existing != null) {
             val idx = captureEntries.indexOf(existing)
             val merged = existing.copy(
-                type = if (type == "response") type else existing.type,
+                type = if (type == "response" || type == "request") type else existing.type,
                 method = if (method.isNotEmpty()) method else existing.method,
                 url = if (url.isNotEmpty()) url else existing.url,
                 host = if (host.isNotEmpty()) host else existing.host,
                 status = if (status > 0) status else existing.status,
-                contentType = if (contentType.isNotEmpty()) contentType else existing.contentType
+                contentType = if (contentType.isNotEmpty()) contentType else existing.contentType,
+                headers = if (headersHex.isNotEmpty()) hexToString(headersHex) else existing.headers,
+                bodyHex = if (bodyHex.isNotEmpty()) bodyHex else existing.bodyHex
             )
             captureEntries[idx] = merged
             return merged
         }
 
-        return CaptureEntry(id, type, method, url, host, status, contentType)
+        return CaptureEntry(id, type, method, url, host, status, contentType,
+            hexToString(headersHex), bodyHex)
+    }
+
+    private fun hexToString(hex: String): String {
+        if (hex.isEmpty()) return ""
+        return try {
+            val bytes = ByteArray(hex.length / 2)
+            for (i in bytes.indices) {
+                bytes[i] = hex.substring(i * 2, i * 2 + 2).toInt(16).toByte()
+            }
+            String(bytes)
+        } catch (_: Exception) { hex }
     }
 
     private fun refreshCaptureLog() {
         val sb = StringBuilder()
         val formatter = java.text.SimpleDateFormat("HH:mm:ss", java.util.Locale.getDefault())
-        val now = formatter.format(java.util.Date())
 
         for (entry in captureEntries.reversed()) {
+            val ts = formatter.format(java.util.Date())
             val icon = when (entry.type) {
                 "https" -> "\uD83D\uDD12"
                 "request" -> "\u2191"
@@ -235,7 +286,12 @@ class MainActivity : Activity() {
                 entry.type == "request" -> "$icon ${entry.method}$status ${entry.host}${entry.url}"
                 else -> "$icon$status ${entry.contentType}"
             }
-            sb.append("[$now] $line\n")
+            sb.append("[$ts] $line\n")
+
+            if (entry.headers.isNotEmpty() && entry.headers.length > 4) {
+                val preview = entry.headers.split("\r\n").take(6).joinToString("\n")
+                sb.append("$preview\n")
+            }
         }
 
         if (sb.isEmpty()) {
