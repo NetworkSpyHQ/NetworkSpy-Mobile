@@ -17,12 +17,52 @@ class VpnTestService : VpnService() {
         private const val TAG = "VpnTestService"
         private const val NOTIFICATION_ID = 1
         private const val CHANNEL_ID = "vpn_test_channel"
+        const val MAX_BUFFERED = 200
 
         @Volatile var isRunning = false
         @Volatile var activeService: VpnTestService? = null
 
         var listener: ((String) -> Unit)? = null
         var captureListener: ((String) -> Unit)? = null
+
+        private val bufferedLogs = mutableListOf<String>()
+        private val bufferedCaptures = mutableListOf<String>()
+
+        fun drainBufferedLogs() {
+            val l = listener ?: return
+            synchronized(bufferedLogs) {
+                for (msg in bufferedLogs) { l(msg) }
+                bufferedLogs.clear()
+            }
+        }
+
+        fun drainBufferedCaptures() {
+            val l = captureListener ?: return
+            synchronized(bufferedCaptures) {
+                for (msg in bufferedCaptures) { l(msg) }
+                bufferedCaptures.clear()
+            }
+        }
+
+        private fun emitOrBuffer(msg: String, buffer: MutableList<String>, listener: ((String) -> Unit)?) {
+            val l = listener
+            if (l != null) {
+                l(msg)
+            } else {
+                synchronized(buffer) {
+                    buffer.add(msg)
+                    if (buffer.size > MAX_BUFFERED) buffer.removeAt(0)
+                }
+            }
+        }
+
+        fun emitTraffic(msg: String) {
+            emitOrBuffer(msg, bufferedLogs, listener)
+        }
+
+        fun emitCapture(msg: String) {
+            emitOrBuffer(msg, bufferedCaptures, captureListener)
+        }
 
         init {
             System.loadLibrary("vpn")
@@ -41,12 +81,12 @@ class VpnTestService : VpnService() {
     // Called from native code via JNI
     @Suppress("unused")
     private fun onTraffic(msg: String) {
-        listener?.invoke(msg)
+        emitTraffic(msg)
     }
 
     @Suppress("unused")
     private fun onHttpCapture(json: String) {
-        captureListener?.invoke(json)
+        emitCapture(json)
     }
 
     // Called from native code via JNI to get a cert for a hostname
@@ -76,7 +116,7 @@ class VpnTestService : VpnService() {
     fun startVpn() {
         if (isRunning) return
 
-        listener?.invoke("VPN starting...")
+        emitTraffic("VPN starting...")
         Log.i(TAG, "Starting VPN...")
         try {
             vpnInterface = Builder()
@@ -105,13 +145,13 @@ class VpnTestService : VpnService() {
         jni_start(vpnInterface!!.fd, false, 3, "", 0)
 
         isRunning = true
-        listener?.invoke("VPN started")
+        emitTraffic("VPN started")
         Log.i(TAG, "VPN started successfully")
     }
 
     fun stopVpn() {
         if (!isRunning) return
-        listener?.invoke("VPN stopping...")
+        emitTraffic("VPN stopping...")
         Log.i(TAG, "Stopping VPN...")
         isRunning = false
 
@@ -119,7 +159,7 @@ class VpnTestService : VpnService() {
         try { vpnInterface?.close() } catch (_: Exception) {}
         vpnInterface = null
 
-        listener?.invoke("VPN stopped")
+        emitTraffic("VPN stopped")
         Log.i(TAG, "VPN stopped")
         stopForeground(STOP_FOREGROUND_REMOVE)
         stopSelf()

@@ -44,6 +44,15 @@ class MainActivity : Activity() {
         VpnTestService.listener = { msg -> appendLog(msg) }
         VpnTestService.captureListener = { json -> handleCapture(json) }
 
+        // Drain any buffered messages from when activity was gone
+        VpnTestService.drainBufferedLogs()
+        VpnTestService.drainBufferedCaptures()
+
+        // Restore UI state if VPN is already running
+        if (VpnTestService.isRunning) {
+            updateUI(true)
+        }
+
         val root = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             setPadding(16, 48, 16, 16)
@@ -303,6 +312,8 @@ class MainActivity : Activity() {
     }
 
     private fun startVpnService() {
+        VpnTestService.listener = { msg -> appendLog(msg) }
+        VpnTestService.captureListener = { json -> handleCapture(json) }
         val intent = Intent(this, VpnTestService::class.java)
         if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O)
             startForegroundService(intent)
@@ -314,6 +325,9 @@ class MainActivity : Activity() {
         VpnTestService.activeService?.stopVpn()
         stopService(Intent(this, VpnTestService::class.java))
         updateUI(false)
+        // Clear buffered logs when user explicitly stops VPN
+        VpnTestService.listener = null
+        VpnTestService.captureListener = null
     }
 
     private fun updateUI(running: Boolean) {
@@ -338,8 +352,8 @@ class MainActivity : Activity() {
     }
 
     override fun onDestroy() {
-        VpnTestService.listener = null
-        VpnTestService.captureListener = null
+        // Don't clear listeners here — they're static and survive activity recreation.
+        // The service needs them to buffer logs when activity is in background.
         super.onDestroy()
     }
 }
