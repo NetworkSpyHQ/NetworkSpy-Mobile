@@ -32,12 +32,20 @@ void handle_dns_packet(struct vpn_context *ctx,
 
     char qname[128];
     extract_dns_name(data, len, qname, sizeof(qname));
+    LOGI("DNS query: %s (from %u.%u.%u.%u:%u)",
+         qname,
+         (src_ip >> 24) & 0xFF, (src_ip >> 16) & 0xFF,
+         (src_ip >> 8) & 0xFF, src_ip & 0xFF, src_port);
     notify_traffic(ctx, "DNS %s", qname);
 
     int sock = socket(AF_INET, SOCK_DGRAM, 0);
-    if (sock < 0) return;
+    if (sock < 0) {
+        LOGE("DNS socket() failed: %s", strerror(errno));
+        return;
+    }
 
     if (protect_socket(ctx, sock) < 0) {
+        LOGE("DNS protect() failed");
         close(sock);
         return;
     }
@@ -47,7 +55,6 @@ void handle_dns_packet(struct vpn_context *ctx,
     tv.tv_usec = 0;
     setsockopt(sock, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
 
-    // Forward to Google DNS
     struct sockaddr_in dns_addr;
     memset(&dns_addr, 0, sizeof(dns_addr));
     dns_addr.sin_family = AF_INET;
@@ -57,24 +64,28 @@ void handle_dns_packet(struct vpn_context *ctx,
     ssize_t sent = sendto(sock, data, len, 0,
                           (const struct sockaddr *)&dns_addr, sizeof(dns_addr));
     if (sent < 0) {
+        LOGE("DNS sendto() failed: %s", strerror(errno));
         close(sock);
         return;
     }
+    LOGI("DNS forwarded %zd bytes to 8.8.8.8 for %s", sent, qname);
 
     uint8_t resp_buf[4096];
     ssize_t resp_len = recvfrom(sock, resp_buf, sizeof(resp_buf), 0, NULL, NULL);
     close(sock);
 
-    if (resp_len <= 0) return;
+    if (resp_len <= 0) {
+        LOGW("DNS no response for %s after %ds", qname, DNS_TIMEOUT);
+        return;
+    }
+    LOGI("DNS response %zd bytes for %s", resp_len, qname);
 
-    // Build IP + UDP response
     int ip_hdr_len = 20;
     int total_len = ip_hdr_len + 8 + (int)resp_len;
     uint8_t *pkt = malloc(total_len);
 
     build_ip_header(pkt, total_len, dst_ip, src_ip, 17, 64);
 
-    // UDP header spoofing the original DNS server
     pkt[ip_hdr_len] = (dst_port >> 8) & 0xFF;
     pkt[ip_hdr_len + 1] = dst_port & 0xFF;
     pkt[ip_hdr_len + 2] = (src_port >> 8) & 0xFF;
@@ -93,6 +104,9 @@ void handle_dns_packet(struct vpn_context *ctx,
     pkt[ip_hdr_len + 6] = (csum >> 8) & 0xFF;
     pkt[ip_hdr_len + 7] = csum & 0xFF;
 
-    write(ctx->tun_fd, pkt, total_len);
+    ssize_t wrote = write(ctx->tun_fd, pkt, total_len);
+    if (wrote < 0) {
+        LOGE("DNS TUN write failed: %s", strerror(errno));
+    }
     free(pkt);
 }

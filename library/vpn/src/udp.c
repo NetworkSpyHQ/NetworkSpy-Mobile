@@ -28,6 +28,13 @@ void handle_udp_packet(struct vpn_context *ctx,
         return;
     }
 
+    LOGI("UDP %u.%u.%u.%u:%u -> %u.%u.%u.%u:%u len=%d",
+         (src_ip >> 24) & 0xFF, (src_ip >> 16) & 0xFF,
+         (src_ip >> 8) & 0xFF, src_ip & 0xFF, src_port,
+         (dst_ip >> 24) & 0xFF, (dst_ip >> 16) & 0xFF,
+         (dst_ip >> 8) & 0xFF, dst_ip & 0xFF, dst_port,
+         payload_len);
+
     notify_traffic(ctx, "UDP %u.%u.%u.%u:%u -> %u.%u.%u.%u:%u",
                    (src_ip >> 24) & 0xFF, (src_ip >> 16) & 0xFF,
                    (src_ip >> 8) & 0xFF, src_ip & 0xFF, src_port,
@@ -56,6 +63,7 @@ void handle_udp_packet(struct vpn_context *ctx,
     ssize_t sent = sendto(sock, packet + payload_off, payload_len, 0,
                           (const struct sockaddr *)&addr, sizeof(addr));
     if (sent < 0) {
+        LOGE("UDP sendto failed: %s", strerror(errno));
         close(sock);
         return;
     }

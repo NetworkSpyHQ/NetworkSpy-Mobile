@@ -52,10 +52,15 @@ static int make_nonblocking(int fd) {
 }
 
 static void send_tun_packet(struct vpn_context *ctx, const uint8_t *pkt, int len) {
-    if (ctx->tun_fd < 0) return;
+    if (ctx->tun_fd < 0) {
+        LOGE("TUN write failed: tun_fd is -1");
+        return;
+    }
     ssize_t n = write(ctx->tun_fd, pkt, len);
     if (n < 0) {
-        LOGE("TUN write failed: %s", strerror(errno));
+        LOGE("TUN write failed: %s (fd=%d)", strerror(errno), ctx->tun_fd);
+    } else if (n != len) {
+        LOGW("TUN write partial: %zd/%d bytes", n, len);
     }
 }
 
@@ -97,7 +102,15 @@ static void *tcp_server_reader(void *arg) {
 
     while (ctx->running && s->active && s->state == S_CONNECTED) {
         ssize_t n = read(s->socket_fd, buf, sizeof(buf));
-        if (n <= 0) break;
+        if (n <= 0) {
+            if (n < 0) {
+                LOGE("TCP read error from %u.%u.%u.%u:%u: %s",
+                     (s->dst_ip >> 24) & 0xFF, (s->dst_ip >> 16) & 0xFF,
+                     (s->dst_ip >> 8) & 0xFF, s->dst_ip & 0xFF,
+                     s->dst_port, strerror(errno));
+            }
+            break;
+        }
 
         s->rx_bytes += n;
 
@@ -221,6 +234,10 @@ void handle_tcp_packet(struct vpn_context *ctx,
         addr.sin_addr.s_addr = htonl(dst_ip);
 
         if (connect_with_timeout(s->socket_fd, &addr, TCP_CONNECT_TIMEOUT) < 0) {
+            LOGW("TCP connect failed %u.%u.%u.%u:%u: %s",
+                 (dst_ip >> 24) & 0xFF, (dst_ip >> 16) & 0xFF,
+                 (dst_ip >> 8) & 0xFF, dst_ip & 0xFF, dst_port,
+                 strerror(errno));
             // Send RST back to client
             int total_len = ip_header_len + 20;
             uint8_t rst_pkt[total_len];
@@ -239,6 +256,10 @@ void handle_tcp_packet(struct vpn_context *ctx,
 
         s->state = S_CONNECTED;
         s->active = true;
+
+        LOGI("TCP connected %u.%u.%u.%u:%u",
+             (dst_ip >> 24) & 0xFF, (dst_ip >> 16) & 0xFF,
+             (dst_ip >> 8) & 0xFF, dst_ip & 0xFF, dst_port);
 
         // Send SYN-ACK
         int total_len = ip_header_len + 20;
