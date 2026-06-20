@@ -1,4 +1,5 @@
 import { Pressable, ScrollView, StyleSheet, View } from 'react-native';
+import { useRouter } from 'expo-router';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { ThemedText } from '@/components/themed-text';
@@ -59,6 +60,7 @@ function Row({
 
 export default function SettingsScreen() {
   const insets = useSafeAreaInsets();
+  const router = useRouter();
 
   return (
     <ThemedView style={styles.container}>
@@ -78,23 +80,39 @@ export default function SettingsScreen() {
             <Row
               label="Certificates"
               hint="Install CA certificate for HTTPS inspection"
-              disabled
+              onPress={() => router.push('/certificates')}
             />
-            <Row label="Manage Subscriptions" last disabled />
+            <Row
+              label="Manage Subscriptions"
+              last
+              onPress={() => router.push('/subscriptions')}
+            />
           </Section>
 
           <Section title="Help">
             <Row
               label="How to Setup"
               hint="Configure your device for traffic capture"
-              disabled
+              onPress={() => router.push('/setup')}
             />
-            <Row label="Support" last disabled />
+            <Row
+              label="Support"
+              last
+              onPress={() => router.push('/support')}
+            />
           </Section>
 
           <Section title="About">
-            <Row label="Report Bug" disabled />
-            <Row label="About" hint="Version 1.0.0" last />
+            <Row
+              label="Report Bug"
+              onPress={() => router.push('/report-bug')}
+            />
+            <Row
+              label="About"
+              hint="Version 1.0.0"
+              last
+              onPress={() => router.push('/about')}
+            />
           </Section>
         </ScrollView>
       </SafeAreaView>
