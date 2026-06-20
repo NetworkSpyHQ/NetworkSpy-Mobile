@@ -20,7 +20,6 @@ function ComposeRow({ entry, asyncMode }: { entry: ComposeEntry; asyncMode: bool
   const router = useRouter();
   const [sending, setSending] = useState(false);
   const [lastResult, setLastResult] = useState<{ code: number } | null>(null);
-  const [fireCount, setFireCount] = useState(0);
 
   const sendRequest = useCallback(async () => {
     let url = entry.url.trim();
@@ -40,8 +39,7 @@ function ComposeRow({ entry, asyncMode }: { entry: ComposeEntry; asyncMode: bool
 
   const handleSend = async () => {
     if (asyncMode) {
-      sendRequest();
-      setFireCount(c => c + 1);
+      sendRequest(); // fire & forget — no UI change
       return;
     }
     setSending(true);
@@ -88,15 +86,6 @@ function ComposeRow({ entry, asyncMode }: { entry: ComposeEntry; asyncMode: bool
       <View style={styles.rowRight}>
         {sending ? (
           <ActivityIndicator size="small" color="#3B82F6" />
-        ) : asyncMode && fireCount > 0 ? (
-          <Pressable
-            style={styles.fireBadge}
-            onPress={(e) => { e.stopPropagation(); setFireCount(0); }}
-          >
-            <ThemedText type="small" style={{ color: '#F59E0B', fontFamily: Platform.select({ ios: 'ui-monospace', default: 'monospace' }) }}>
-              {fireCount}
-            </ThemedText>
-          </Pressable>
         ) : lastResult ? (
           <Pressable
             onPress={(e) => { e.stopPropagation(); setLastResult(null); }}
@@ -195,11 +184,6 @@ export default function ComposerListScreen() {
         <View style={styles.header}>
           <ThemedText type="subtitle">Composer</ThemedText>
           <View style={styles.headerRight}>
-            {asyncMode && (
-              <View style={styles.asyncBadge}>
-                <ThemedText type="small" style={{ color: '#F59E0B' }}>⚡</ThemedText>
-              </View>
-            )}
             <Pressable
               style={({ pressed }) => [styles.addButton, pressed && styles.addButtonPressed]}
               onPress={() => router.push({ pathname: '/composer-detail', params: { id: 'new' } })}
@@ -271,12 +255,6 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     gap: Spacing.one,
-  },
-  asyncBadge: {
-    paddingHorizontal: Spacing.one,
-    paddingVertical: 2,
-    borderRadius: Spacing.one,
-    backgroundColor: 'rgba(245, 158, 11, 0.1)',
   },
   addButton: {
     width: 32,
@@ -356,12 +334,6 @@ const styles = StyleSheet.create({
     color: '#FFFFFF',
     fontSize: 13,
     marginLeft: 2,
-  },
-  fireBadge: {
-    paddingHorizontal: 6,
-    paddingVertical: 2,
-    borderRadius: 4,
-    backgroundColor: 'rgba(245, 158, 11, 0.1)',
   },
   methodBadge: {
     paddingHorizontal: 6,
