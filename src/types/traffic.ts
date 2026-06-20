@@ -7,6 +7,16 @@ export type HttpMethod =
   | 'HEAD'
   | 'OPTIONS';
 
+export const HttpMethods: HttpMethod[] = [
+  'GET',
+  'POST',
+  'PUT',
+  'DELETE',
+  'PATCH',
+  'HEAD',
+  'OPTIONS',
+];
+
 export interface TrafficEntry {
   id: string;
   method: HttpMethod;
@@ -24,4 +34,14 @@ export interface TrafficEntry {
   contentType: string | null;
   responseSize: number;
   error: string | null;
+}
+
+export interface ComposeEntry {
+  id: string;
+  name: string;
+  method: HttpMethod;
+  url: string;
+  headers: [string, string][];
+  body: string | null;
+  timestamp: number;
 }

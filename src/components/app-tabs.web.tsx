@@ -23,6 +23,9 @@ export default function AppTabs() {
           <TabTrigger name="index" href="/" asChild>
             <TabButton>Traffic</TabButton>
           </TabTrigger>
+          <TabTrigger name="composer" href="/composer" asChild>
+            <TabButton>Composer</TabButton>
+          </TabTrigger>
           <TabTrigger name="settings" href="/settings" asChild>
             <TabButton>Settings</TabButton>
           </TabTrigger>

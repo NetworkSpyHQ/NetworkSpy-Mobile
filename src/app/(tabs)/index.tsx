@@ -17,7 +17,6 @@ import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
 import { mockTraffic } from '@/data/mock-traffic';
 import {
-  BottomTabInset,
   Colors,
   MaxContentWidth,
   MethodColors,
@@ -89,15 +88,23 @@ function TrafficRow({ entry, hideHost }: { entry: TrafficEntry; hideHost?: boole
             </View>
           )}
         </View>
-        <ThemedText style={styles.metaText} themeColor="textSecondary">
-          {formatDuration(entry.duration)}
-        </ThemedText>
-        <ThemedText style={styles.metaText} themeColor="textSecondary">
-          {formatSize(entry.responseSize)}
-        </ThemedText>
-        <ThemedText style={styles.metaText} themeColor="textSecondary">
-          {formatTime(entry.timestamp)}
-        </ThemedText>
+        <View style={styles.rowRightMeta}>
+          <ThemedText style={styles.metaText} themeColor="textSecondary">
+            {formatDuration(entry.duration)}
+          </ThemedText>
+          <ThemedText style={[styles.metaText, styles.metaDot]} themeColor="textSecondary">
+            ·
+          </ThemedText>
+          <ThemedText style={styles.metaText} themeColor="textSecondary">
+            {formatSize(entry.responseSize)}
+          </ThemedText>
+          <ThemedText style={[styles.metaText, styles.metaDot]} themeColor="textSecondary">
+            ·
+          </ThemedText>
+          <ThemedText style={styles.metaText} themeColor="textSecondary">
+            {formatTime(entry.timestamp)}
+          </ThemedText>
+        </View>
       </View>
     </Pressable>
   );
@@ -182,6 +189,7 @@ export default function TrafficListScreen() {
   const [grouped, setGrouped] = useState(false);
   const [menuVisible, setMenuVisible] = useState(false);
   const traffic = mockTraffic;
+  const insets = useSafeAreaInsets();
 
   const sections = useMemo(() => {
     if (grouped) return groupByHost(traffic);
@@ -190,7 +198,7 @@ export default function TrafficListScreen() {
 
   return (
     <ThemedView style={styles.container}>
-      <SafeAreaView style={styles.safeArea} edges={['top']}>
+      <SafeAreaView style={[styles.safeArea, { paddingBottom: insets.bottom + Spacing.three }]} edges={['top']}>
         <View style={styles.header}>
           <ThemedText type="subtitle">Traffic</ThemedText>
           <View style={styles.headerRight}>
@@ -249,7 +257,6 @@ const styles = StyleSheet.create({
   safeArea: {
     flex: 1,
     maxWidth: MaxContentWidth,
-    paddingBottom: BottomTabInset,
   },
   header: {
     flexDirection: 'row',
@@ -290,7 +297,7 @@ const styles = StyleSheet.create({
     flex: 1,
   },
   listContent: {
-    paddingBottom: Spacing.three,
+    paddingBottom: 0,
   },
   sectionHeader: {
     paddingHorizontal: Spacing.three,
@@ -360,6 +367,14 @@ const styles = StyleSheet.create({
   },
   metaText: {
     fontSize: 11,
+  },
+  metaDot: {
+    marginHorizontal: 2,
+  },
+  rowRightMeta: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 0,
   },
   separator: {
     height: StyleSheet.hairlineWidth,

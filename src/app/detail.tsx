@@ -9,6 +9,7 @@ import { ThemedView } from '@/components/themed-view';
 import { Collapsible } from '@/components/ui/collapsible';
 import { Colors, MethodColors, Spacing, getStatusColor } from '@/constants/theme';
 import { getEntryById } from '@/data/mock-traffic';
+import { saveCompose, generateId } from '@/data/compose-store';
 import type { TrafficEntry } from '@/types/traffic';
 
 function formatDuration(ms: number): string {
@@ -84,10 +85,12 @@ function ActionSheet({
   visible,
   onClose,
   onCopyCurl,
+  onCreateCompose,
 }: {
   visible: boolean;
   onClose: () => void;
   onCopyCurl: () => void;
+  onCreateCompose: () => void;
 }) {
   const insets = useSafeAreaInsets();
   const scheme = useColorScheme();
@@ -100,6 +103,9 @@ function ActionSheet({
       </Pressable>
       <View style={[sheetStyles.sheet, { paddingBottom: insets.bottom + Spacing.three, backgroundColor: colors.background }]}>
         <View style={sheetStyles.handle} />
+        <Pressable style={({ pressed }) => [sheetStyles.row, pressed && sheetStyles.rowPressed]} onPress={onCreateCompose}>
+          <ThemedText>Create Compose</ThemedText>
+        </Pressable>
         <Pressable style={({ pressed }) => [sheetStyles.row, pressed && sheetStyles.rowPressed]} onPress={onCopyCurl}>
           <ThemedText>Copy as cURL</ThemedText>
         </Pressable>
@@ -277,6 +283,21 @@ export default function DetailScreen() {
         <ActionSheet
           visible={menuVisible}
           onClose={() => setMenuVisible(false)}
+          onCreateCompose={() => {
+            setMenuVisible(false);
+            const composeId = generateId();
+            const headers: [string, string][] = Object.entries(entry.requestHeaders);
+            saveCompose({
+              id: composeId,
+              name: `${entry.method} ${entry.host}${entry.path}`,
+              method: entry.method,
+              url: entry.url,
+              headers,
+              body: entry.requestBody,
+              timestamp: Date.now(),
+            });
+            router.push({ pathname: '/composer-detail', params: { id: composeId } });
+          }}
           onCopyCurl={async () => {
             setMenuVisible(false);
             await Clipboard.setStringAsync(buildCurl(entry));
