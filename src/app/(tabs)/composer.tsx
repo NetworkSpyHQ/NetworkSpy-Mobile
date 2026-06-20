@@ -90,6 +90,8 @@ function ComposeRow({ entry, asyncMode, onFire }: { entry: ComposeEntry; asyncMo
         ) : lastResult ? (
           <Pressable
             onPress={(e) => { e.stopPropagation(); setLastResult(null); }}
+            style={styles.resultButton}
+            hitSlop={12}
           >
             <ThemedText
               type="small"
@@ -348,6 +350,13 @@ const styles = StyleSheet.create({
     color: '#FFFFFF',
     fontSize: 13,
     marginLeft: 2,
+  },
+  resultButton: {
+    paddingHorizontal: Spacing.two,
+    paddingVertical: Spacing.one,
+    minWidth: 40,
+    alignItems: 'center',
+    borderRadius: Spacing.one,
   },
   methodBadge: {
     paddingHorizontal: 6,
