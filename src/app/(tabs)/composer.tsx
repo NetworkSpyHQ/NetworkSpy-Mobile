@@ -90,14 +90,17 @@ function ComposeRow({ entry, asyncMode, onFire }: { entry: ComposeEntry; asyncMo
         ) : lastResult ? (
           <Pressable
             onPress={(e) => { e.stopPropagation(); setLastResult(null); }}
-            style={styles.resultButton}
-            hitSlop={12}
+            style={[
+              styles.resultButton,
+              { backgroundColor: lastResult.code === 0 ? '#EF4444' : lastResult.code >= 400 ? '#F59E0B' : '#22C55E' },
+            ]}
           >
             <ThemedText
               type="small"
               style={{
-                color: lastResult.code === 0 ? '#EF4444' : lastResult.code >= 400 ? '#F59E0B' : '#22C55E',
+                color: '#FFFFFF',
                 fontFamily: Platform.select({ ios: 'ui-monospace', default: 'monospace' }),
+                fontWeight: '700',
               }}
             >
               {lastResult.code || 'ERR'}
@@ -352,11 +355,15 @@ const styles = StyleSheet.create({
     marginLeft: 2,
   },
   resultButton: {
-    paddingHorizontal: Spacing.two,
-    paddingVertical: Spacing.one,
-    minWidth: 40,
+    alignSelf: 'stretch',
+    justifyContent: 'center',
     alignItems: 'center',
-    borderRadius: Spacing.one,
+    paddingHorizontal: Spacing.two + 2,
+    marginVertical: -Spacing.two - 2,
+    marginRight: -Spacing.three,
+    borderTopLeftRadius: Spacing.two,
+    borderBottomLeftRadius: Spacing.two,
+    minWidth: 48,
   },
   methodBadge: {
     paddingHorizontal: 6,
