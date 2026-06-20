@@ -28,8 +28,6 @@ class CaptureVpnService : VpnService() {
 
     companion object {
         const val TAG = "CaptureVpnService"
-        const val ACTION_START = "com.networkspy.mobile.vpn.START"
-        const val ACTION_STOP = "com.networkspy.mobile.vpn.STOP"
         const val NOTIFICATION_ID = 1
         const val CHANNEL_ID = "vpn_capture"
         const val PROXY_PORT = 8888
@@ -38,9 +36,7 @@ class CaptureVpnService : VpnService() {
         private var activeService: CaptureVpnService? = null
 
         fun start(context: Context) {
-            val intent = Intent(context, CaptureVpnService::class.java).apply {
-                action = ACTION_START
-            }
+            val intent = Intent(context, CaptureVpnService::class.java)
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
                 context.startForegroundService(intent)
             } else {
@@ -56,7 +52,8 @@ class CaptureVpnService : VpnService() {
     private var vpnInterface: ParcelFileDescriptor? = null
     private var proxyServer: HttpCaptureProxy? = null
     private val executor: ExecutorService = Executors.newCachedThreadPool()
-    private val tcpConnections = ConcurrentHashMap<String, TcpTunnel>()
+    private val tcpTunnels = ConcurrentHashMap<String, TcpTunnel>()
+    private var tunOutput: FileOutputStream? = null
 
     override fun onCreate() {
         super.onCreate()
@@ -65,10 +62,7 @@ class CaptureVpnService : VpnService() {
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-        when (intent?.action) {
-            ACTION_START -> startVpn()
-            ACTION_STOP -> stopVpn()
-        }
+        startVpn()
         return START_STICKY
     }
 
@@ -87,11 +81,9 @@ class CaptureVpnService : VpnService() {
                 .setBlocking(true)
                 .establish()
         } catch (e: IllegalStateException) {
-            Log.e(TAG, "VPN not prepared")
             VpnModule.emitError("VPN permission required")
             return
         } catch (e: Exception) {
-            Log.e(TAG, "Error establishing VPN", e)
             VpnModule.emitError("VPN establish failed: ${e.message}")
             return
         }
@@ -103,6 +95,8 @@ class CaptureVpnService : VpnService() {
 
         startForeground(NOTIFICATION_ID, buildNotification())
 
+        tunOutput = FileOutputStream(vpnInterface!!.fileDescriptor)
+
         proxyServer = HttpCaptureProxy(PROXY_PORT, applicationContext)
         proxyServer?.start()
 
@@ -110,7 +104,7 @@ class CaptureVpnService : VpnService() {
         VpnModule.emitStatus("started")
 
         executor.execute { packetLoop(vpnInterface!!) }
-        Log.d(TAG, "VPN started with packet forwarder")
+        Log.d(TAG, "VPN started with packet forwarding")
     }
 
     private fun stopVpn() {
@@ -118,19 +112,16 @@ class CaptureVpnService : VpnService() {
         Log.d(TAG, "Stopping VPN")
         isRunning = false
 
-        // Close TUN first to unblock packet loop
         try { vpnInterface?.close() } catch (_: Exception) {}
         vpnInterface = null
+        tunOutput = null
 
-        // Close all TCP tunnels
-        tcpConnections.values.forEach { try { it.close() } catch (_: Exception) {} }
-        tcpConnections.clear()
+        tcpTunnels.values.forEach { try { it.close() } catch (_: Exception) {} }
+        tcpTunnels.clear()
 
-        // Stop proxy
         try { proxyServer?.stop() } catch (_: Exception) {}
         proxyServer = null
 
-        // Shutdown thread pool
         executor.shutdownNow()
 
         VpnModule.emitStatus("stopped")
@@ -140,7 +131,6 @@ class CaptureVpnService : VpnService() {
 
     private fun packetLoop(vpnFd: ParcelFileDescriptor) {
         val input = FileInputStream(vpnFd.fileDescriptor)
-        val output = FileOutputStream(vpnFd.fileDescriptor)
         val buffer = ByteArray(32767)
         var count = 0L
 
@@ -149,89 +139,177 @@ class CaptureVpnService : VpnService() {
                 val len = input.read(buffer)
                 if (len <= 0) continue
                 count++
-
                 try {
-                    handlePacket(buffer, len, output)
+                    handlePacket(buffer, len)
                 } catch (e: Exception) {
-                    Log.e(TAG, "Packet handle error: ${e.message}")
+                    Log.e(TAG, "Packet error: ${e.message}")
                 }
             }
         } catch (e: Exception) {
-            if (isRunning) Log.e(TAG, "Packet loop error: ${e.message}")
+            if (isRunning) Log.e(TAG, "Loop error: ${e.message}")
         } finally {
-            Log.d(TAG, "Packet loop ended. $count packets processed")
+            Log.d(TAG, "Packet loop ended. $count packets")
         }
     }
 
-    private fun handlePacket(data: ByteArray, length: Int, tunOut: FileOutputStream) {
+    private fun handlePacket(data: ByteArray, length: Int) {
         if (length < 20) return
         val version = (data[0].toInt() shr 4) and 0x0F
         if (version != 4) return
 
         val protocol = data[9].toInt() and 0xFF
         when (protocol) {
-            6 -> handleTcp(data, length, tunOut)
+            6 -> handleTcp(data, length)
             17 -> handleUdp(data, length)
         }
     }
 
-    private fun handleTcp(data: ByteArray, length: Int, tunOut: FileOutputStream) {
+    // ── TCP ──────────────────────────────────────────────────
+
+    private fun handleTcp(data: ByteArray, length: Int) {
         val ipHdrLen = (data[0].toInt() and 0x0F) * 4
         if (length < ipHdrLen + 20) return
 
         val srcIp = ByteArray(4); System.arraycopy(data, 12, srcIp, 0, 4)
         val dstIp = ByteArray(4); System.arraycopy(data, 16, dstIp, 0, 4)
-
         val srcPort = ((data[ipHdrLen].toInt() and 0xFF) shl 8) or (data[ipHdrLen + 1].toInt() and 0xFF)
         val dstPort = ((data[ipHdrLen + 2].toInt() and 0xFF) shl 8) or (data[ipHdrLen + 3].toInt() and 0xFF)
-
         val flags = data[ipHdrLen + 13].toInt() and 0xFF
         val isSyn = (flags and 0x02) != 0
-        val isFin = (flags and 0x01) != 0
         val isRst = (flags and 0x04) != 0
-        val seqNum = ByteBuffer.wrap(data, ipHdrLen + 4, 4).getInt()
-
-        val key = "${ipStr(srcIp)}:$srcPort->${ipStr(dstIp)}:$dstPort"
+        val isFin = (flags and 0x01) != 0
         val tcpHdrLen = ((data[ipHdrLen + 12].toInt() shr 4) and 0x0F) * 4
         val payloadOff = ipHdrLen + tcpHdrLen
         val payloadLen = length - payloadOff
+        val seqNum = ByteBuffer.wrap(data, ipHdrLen + 4, 4).int
+        val key = "${ipStr(srcIp)}:$srcPort->${ipStr(dstIp)}:$dstPort"
 
         if (dstPort == PROXY_PORT) return
 
         if (isSyn && !isRst) {
-            startTcpTunnel(key, srcIp, srcPort, dstIp, dstPort, ipHdrLen, seqNum, tunOut)
+            tcpTunnels[key]?.close()
+            val tunnel = TcpTunnel(srcIp, dstIp, srcPort, dstPort, ipHdrLen, seqNum)
+            tcpTunnels[key] = tunnel
+            executor.execute { tunnel.run() }
         } else if (isRst) {
-            tcpConnections.remove(key)?.close()
+            tcpTunnels.remove(key)?.close()
         } else if (isFin) {
-            tcpConnections[key]?.let { tunnel ->
-                tunnel.sendFin()
-            }
+            tcpTunnels[key]?.sendFin()
         } else if (payloadLen > 0) {
-            tcpConnections[key]?.let { tunnel ->
-                val payload = ByteArray(payloadLen)
-                System.arraycopy(data, payloadOff, payload, 0, payloadLen)
-                tunnel.sendData(payload)
-            }
+            tcpTunnels[key]?.sendData(data, payloadOff, payloadLen)
         }
     }
 
-    private fun startTcpTunnel(
-        key: String,
-        srcIp: ByteArray, srcPort: Int,
-        dstIp: ByteArray, dstPort: Int,
-        ipHdrLen: Int, clientSeq: Int,
-        tunOut: FileOutputStream
+    inner class TcpTunnel(
+        private val srcIp: ByteArray,
+        private val dstIp: ByteArray,
+        private val srcPort: Int,
+        private val dstPort: Int,
+        private val ipHdrLen: Int,
+        clientSeq: Int
     ) {
-        val tunnel = TcpTunnel(key, srcIp, srcPort, dstIp, dstPort, ipHdrLen, clientSeq, tunOut)
-        tcpConnections[key] = tunnel
-        executor.execute { tunnel.run(this) }
+        private var socket: Socket? = null
+        private var mySeq = (Math.random() * Int.MAX_VALUE).toInt()
+        private var clientSeqNum = clientSeq
+        private var sentSynAck = false
+
+        fun run() {
+            try {
+                val sock = Socket()
+                protect(sock)
+                sock.connect(InetSocketAddress(InetAddress.getByAddress(dstIp), dstPort), 10000)
+                socket = sock
+
+                val synAck = buildTcpPacket(0x12, ByteArray(0), 0) // SYN+ACK
+                mySeq++ // SYN consumes 1 seq number
+                sentSynAck = true
+
+                writeToTun(synAck)
+
+                // Read from server, write to TUN
+                val buf = ByteArray(8192)
+                while (isRunning) {
+                    val len = sock.getInputStream().read(buf)
+                    if (len <= 0) break
+                    if (len > 0) {
+                        val pkt = buildTcpPacket(0x18, buf, len) // PSH+ACK
+                        writeToTun(pkt)
+                        mySeq += len
+                    }
+                }
+            } catch (_: Exception) {}
+            close()
+        }
+
+        fun sendData(data: ByteArray, off: Int, len: Int) {
+            try {
+                socket?.getOutputStream()?.write(data, off, len)
+                clientSeqNum += len
+            } catch (_: Exception) {
+                close()
+            }
+        }
+
+        fun sendFin() {
+            try { socket?.shutdownOutput() } catch (_: Exception) {}
+            close()
+        }
+
+        fun close() {
+            tcpTunnels.remove("${ipStr(srcIp)}:$srcPort->${ipStr(dstIp)}:$dstPort")
+            try { socket?.close() } catch (_: Exception) {}
+        }
+
+        private fun buildTcpPacket(flags: Int, payload: ByteArray, payloadLen: Int): ByteArray {
+            val tcpLen = 20 + payloadLen
+            val totalLen = ipHdrLen + tcpLen
+            val pkt = ByteArray(totalLen)
+
+            // IP header
+            pkt[0] = 0x45.toByte()
+            pkt[2] = ((totalLen shr 8) and 0xFF).toByte()
+            pkt[3] = (totalLen and 0xFF).toByte()
+            pkt[8] = 64; pkt[9] = 6 // TTL, TCP
+            System.arraycopy(dstIp, 0, pkt, 12, 4) // src = original dst
+            System.arraycopy(srcIp, 0, pkt, 16, 4) // dst = original src
+
+            // TCP header
+            pkt[ipHdrLen] = ((dstPort shr 8) and 0xFF).toByte()
+            pkt[ipHdrLen + 1] = (dstPort and 0xFF).toByte()
+            pkt[ipHdrLen + 2] = ((srcPort shr 8) and 0xFF).toByte()
+            pkt[ipHdrLen + 3] = (srcPort and 0xFF).toByte()
+            // Seq
+            putInt32(pkt, ipHdrLen + 4, mySeq)
+            // Ack
+            putInt32(pkt, ipHdrLen + 8, clientSeqNum + 1)
+            // Data offset + flags
+            pkt[ipHdrLen + 12] = 0x50.toByte()
+            pkt[ipHdrLen + 13] = flags.toByte()
+            // Window
+            pkt[ipHdrLen + 14] = 0xFF.toByte()
+            pkt[ipHdrLen + 15] = 0xFF.toByte()
+
+            System.arraycopy(payload, 0, pkt, ipHdrLen + 20, payloadLen)
+            return pkt
+        }
+
+        private fun putInt32(buf: ByteArray, off: Int, v: Int) {
+            buf[off] = ((v shr 24) and 0xFF).toByte()
+            buf[off + 1] = ((v shr 16) and 0xFF).toByte()
+            buf[off + 2] = ((v shr 8) and 0xFF).toByte()
+            buf[off + 3] = (v and 0xFF).toByte()
+        }
     }
+
+    // ── UDP ──────────────────────────────────────────────────
 
     private fun handleUdp(data: ByteArray, length: Int) {
         val ipHdrLen = (data[0].toInt() and 0x0F) * 4
         if (length < ipHdrLen + 8) return
 
+        val srcIp = ByteArray(4); System.arraycopy(data, 12, srcIp, 0, 4)
         val dstIp = ByteArray(4); System.arraycopy(data, 16, dstIp, 0, 4)
+        val srcPort = ((data[ipHdrLen].toInt() and 0xFF) shl 8) or (data[ipHdrLen + 1].toInt() and 0xFF)
         val dstPort = ((data[ipHdrLen + 2].toInt() and 0xFF) shl 8) or (data[ipHdrLen + 3].toInt() and 0xFF)
         val udpLen = ((data[ipHdrLen + 4].toInt() and 0xFF) shl 8) or (data[ipHdrLen + 5].toInt() and 0xFF)
         val payloadOff = ipHdrLen + 8
@@ -241,151 +319,56 @@ class CaptureVpnService : VpnService() {
 
         executor.execute {
             try {
-                val socket = DatagramSocket().also { protect(it) }
-                val payload = ByteArray(payloadLen)
-                System.arraycopy(data, payloadOff, payload, 0, payloadLen)
-                socket.send(DatagramPacket(payload, payloadLen, InetAddress.getByAddress(dstIp), dstPort))
+                DatagramSocket().use { socket ->
+                    protect(socket)
+                    socket.soTimeout = 10000
+                    val payload = ByteArray(payloadLen)
+                    System.arraycopy(data, payloadOff, payload, 0, payloadLen)
+                    socket.send(DatagramPacket(payload, payloadLen, InetAddress.getByAddress(dstIp), dstPort))
 
-                // Try to get response
-                socket.soTimeout = 5000
-                val respBuf = ByteArray(4096)
-                val resp = DatagramPacket(respBuf, respBuf.size)
-                socket.receive(resp)
-                socket.close()
+                    val respBuf = ByteArray(4096)
+                    val resp = DatagramPacket(respBuf, respBuf.size)
+                    socket.receive(resp)
+
+                    // Write UDP response back to TUN
+                    val pkt = buildUdpPacket(dstIp, srcIp, dstPort, srcPort, resp.data, resp.length)
+                    writeToTun(pkt)
+                }
             } catch (_: Exception) {}
         }
     }
 
-    inner class TcpTunnel(
-        private val key: String,
-        private val srcIp: ByteArray,
-        private val srcPort: Int,
-        private val dstIp: ByteArray,
-        private val dstPort: Int,
-        private val ipHdrLen: Int,
-        clientSeq: Int,
-        private val tunOut: FileOutputStream
-    ) {
-        private var socket: Socket? = null
-        private var mySeq = (Math.random() * Int.MAX_VALUE).toInt()
-        private var clientSeqNum = clientSeq
+    private fun buildUdpPacket(
+        srcIp: ByteArray, dstIp: ByteArray,
+        srcPort: Int, dstPort: Int,
+        payload: ByteArray, payloadLen: Int
+    ): ByteArray {
+        val udpLen = 8 + payloadLen
+        val totalLen = 20 + udpLen
+        val pkt = ByteArray(totalLen)
 
-        fun run(service: CaptureVpnService) {
-            try {
-                val sock = Socket()
-                service.protect(sock)
-                sock.connect(InetSocketAddress(InetAddress.getByAddress(dstIp), dstPort), 10000)
+        pkt[0] = 0x45.toByte()
+        pkt[2] = ((totalLen shr 8) and 0xFF).toByte(); pkt[3] = (totalLen and 0xFF).toByte()
+        pkt[8] = 64; pkt[9] = 17 // TTL, UDP
+        System.arraycopy(srcIp, 0, pkt, 12, 4)
+        System.arraycopy(dstIp, 0, pkt, 16, 4)
 
-                socket = sock
+        pkt[20] = ((srcPort shr 8) and 0xFF).toByte(); pkt[21] = (srcPort and 0xFF).toByte()
+        pkt[22] = ((dstPort shr 8) and 0xFF).toByte(); pkt[23] = (dstPort and 0xFF).toByte()
+        pkt[24] = ((udpLen shr 8) and 0xFF).toByte(); pkt[25] = (udpLen and 0xFF).toByte()
 
-                // Build SYN-ACK response
-                val synAck = buildSynAck()
-                synchronized(tunOut) { tunOut.write(synAck) }
-
-                // Read from server, write to TUN
-                executor.execute {
-                    try {
-                        val buf = ByteArray(8192)
-                        while (isRunning && socket != null) {
-                            val len = sock.getInputStream().read(buf)
-                            if (len <= 0) break
-                            val pkt = buildResponsePacket(buf, len)
-                            synchronized(tunOut) { tunOut.write(pkt) }
-                        }
-                    } catch (_: Exception) {}
-                    close()
-                }
-            } catch (e: Exception) {
-                // Send RST
-                val rst = buildRst()
-                try { synchronized(tunOut) { tunOut.write(rst) } } catch (_: Exception) {}
-                tcpConnections.remove(key)
-            }
-        }
-
-        fun sendData(payload: ByteArray) {
-            clientSeqNum += payload.size
-            socket?.getOutputStream()?.write(payload)
-        }
-
-        fun sendFin() {
-            try { socket?.shutdownOutput() } catch (_: Exception) {}
-        }
-
-        fun close() {
-            tcpConnections.remove(key)
-            try { socket?.close() } catch (_: Exception) {}
-        }
-
-        private fun buildSynAck(): ByteArray {
-            val pkt = ByteArray(ipHdrLen + 20)
-            // IP header
-            pkt[0] = 0x45.toByte()
-            val totalLen = pkt.size
-            pkt[2] = ((totalLen shr 8) and 0xFF).toByte(); pkt[3] = (totalLen and 0xFF).toByte()
-            pkt[8] = 64; pkt[9] = 6 // TTL=64, TCP
-            System.arraycopy(dstIp, 0, pkt, 12, 4) // src = original dst
-            System.arraycopy(srcIp, 0, pkt, 16, 4) // dst = original src
-            // TCP header
-            pkt[ipHdrLen] = ((dstPort shr 8) and 0xFF).toByte(); pkt[ipHdrLen + 1] = (dstPort and 0xFF).toByte()
-            pkt[ipHdrLen + 2] = ((srcPort shr 8) and 0xFF).toByte(); pkt[ipHdrLen + 3] = (srcPort and 0xFF).toByte()
-            val seqOff = ipHdrLen + 4
-            pkt[seqOff] = ((mySeq shr 24) and 0xFF).toByte(); pkt[seqOff + 1] = ((mySeq shr 16) and 0xFF).toByte()
-            pkt[seqOff + 2] = ((mySeq shr 8) and 0xFF).toByte(); pkt[seqOff + 3] = (mySeq and 0xFF).toByte()
-            val ackNum = clientSeqNum + 1
-            val ackOff = ipHdrLen + 8
-            pkt[ackOff] = ((ackNum shr 24) and 0xFF).toByte(); pkt[ackOff + 1] = ((ackNum shr 16) and 0xFF).toByte()
-            pkt[ackOff + 2] = ((ackNum shr 8) and 0xFF).toByte(); pkt[ackOff + 3] = (ackNum and 0xFF).toByte()
-            pkt[ipHdrLen + 12] = 0x50.toByte() // data offset 5, no options
-            pkt[ipHdrLen + 13] = 0x12.toByte() // SYN+ACK
-            pkt[ipHdrLen + 14] = (0xFF).toByte(); pkt[ipHdrLen + 15] = (0xFF).toByte() // window
-            return pkt
-        }
-
-        private fun buildResponsePacket(data: ByteArray, len: Int): ByteArray {
-            val pkt = ByteArray(ipHdrLen + 20 + len)
-            // IP header
-            pkt[0] = 0x45.toByte()
-            val totalLen = pkt.size
-            pkt[2] = ((totalLen shr 8) and 0xFF).toByte(); pkt[3] = (totalLen and 0xFF).toByte()
-            pkt[8] = 64; pkt[9] = 6
-            System.arraycopy(dstIp, 0, pkt, 12, 4)
-            System.arraycopy(srcIp, 0, pkt, 16, 4)
-            // TCP header
-            pkt[ipHdrLen] = ((dstPort shr 8) and 0xFF).toByte(); pkt[ipHdrLen + 1] = (dstPort and 0xFF).toByte()
-            pkt[ipHdrLen + 2] = ((srcPort shr 8) and 0xFF).toByte(); pkt[ipHdrLen + 3] = (srcPort and 0xFF).toByte()
-            val seqOff = ipHdrLen + 4
-            pkt[seqOff] = ((mySeq shr 24) and 0xFF).toByte(); pkt[seqOff + 1] = ((mySeq shr 16) and 0xFF).toByte()
-            pkt[seqOff + 2] = ((mySeq shr 8) and 0xFF).toByte(); pkt[seqOff + 3] = (mySeq and 0xFF).toByte()
-            mySeq += len
-            val ackNum = clientSeqNum
-            val ackOff = ipHdrLen + 8
-            pkt[ackOff] = ((ackNum shr 24) and 0xFF).toByte(); pkt[ackOff + 1] = ((ackNum shr 16) and 0xFF).toByte()
-            pkt[ackOff + 2] = ((ackNum shr 8) and 0xFF).toByte(); pkt[ackOff + 3] = (ackNum and 0xFF).toByte()
-            pkt[ipHdrLen + 12] = 0x50.toByte()
-            pkt[ipHdrLen + 13] = 0x18.toByte() // PSH+ACK
-            pkt[ipHdrLen + 14] = (0xFF).toByte(); pkt[ipHdrLen + 15] = (0xFF).toByte()
-            System.arraycopy(data, 0, pkt, ipHdrLen + 20, len)
-            return pkt
-        }
-
-        private fun buildRst(): ByteArray {
-            val pkt = ByteArray(ipHdrLen + 20)
-            pkt[0] = 0x45.toByte()
-            val totalLen = pkt.size
-            pkt[2] = ((totalLen shr 8) and 0xFF).toByte(); pkt[3] = (totalLen and 0xFF).toByte()
-            pkt[8] = 64; pkt[9] = 6
-            System.arraycopy(dstIp, 0, pkt, 12, 4)
-            System.arraycopy(srcIp, 0, pkt, 16, 4)
-            pkt[ipHdrLen] = ((dstPort shr 8) and 0xFF).toByte(); pkt[ipHdrLen + 1] = (dstPort and 0xFF).toByte()
-            pkt[ipHdrLen + 2] = ((srcPort shr 8) and 0xFF).toByte(); pkt[ipHdrLen + 3] = (srcPort and 0xFF).toByte()
-            pkt[ipHdrLen + 12] = 0x50.toByte()
-            pkt[ipHdrLen + 13] = 0x04.toByte() // RST
-            return pkt
-        }
+        System.arraycopy(payload, 0, pkt, 28, payloadLen)
+        return pkt
     }
 
-    private fun ipStr(ip: ByteArray): String = "${ip[0].toUByte()}.${ip[1].toUByte()}.${ip[2].toUByte()}.${ip[3].toUByte()}"
+    // ── helpers ──────────────────────────────────────────────
+
+    private fun writeToTun(pkt: ByteArray) {
+        tunOutput?.let { synchronized(it) { it.write(pkt) } }
+    }
+
+    private fun ipStr(ip: ByteArray): String =
+        "${ip[0].toUByte()}.${ip[1].toUByte()}.${ip[2].toUByte()}.${ip[3].toUByte()}"
 
     private fun buildNotification(): Notification {
         val pi = PendingIntent.getActivity(this, 0, Intent(this, MainActivity::class.java),
@@ -411,5 +394,9 @@ class CaptureVpnService : VpnService() {
         stopVpn()
         super.onDestroy()
     }
-    override fun onRevoke() { stopVpn(); super.onRevoke() }
+
+    override fun onRevoke() {
+        stopVpn()
+        super.onRevoke()
+    }
 }
