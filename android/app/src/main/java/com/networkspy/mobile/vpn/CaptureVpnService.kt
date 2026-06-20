@@ -18,8 +18,10 @@ import java.net.DatagramPacket
 import java.net.DatagramSocket
 import java.net.InetAddress
 import java.net.InetSocketAddress
+import java.net.NetworkInterface
 import java.net.Socket
 import java.nio.ByteBuffer
+import java.nio.channels.SocketChannel
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
@@ -259,11 +261,21 @@ class CaptureVpnService : VpnService() {
         fun run() {
             try {
                 logd("Tunnel $key connecting to ${ipStr(dstIp)}:$dstPort")
-                val sock = Socket()
-                protect(sock)
-                sock.connect(InetSocketAddress(InetAddress.getByAddress(dstIp), dstPort), 10000)
+                val channel = SocketChannel.open()
+                val sock = channel.socket()
+                sock.reuseAddress = true
+                // Explicitly bind to a real interface address, not the VPN's 10.0.2.1
+                val realAddr = findRealAddress()
+                if (realAddr != null) {
+                    sock.bind(InetSocketAddress(realAddr, 0))
+                    logd("Tunnel $key bound to $realAddr:${sock.localPort}")
+                }
+                val protected = protect(sock)
+                logd("Tunnel $key protect()=$protected")
+                channel.connect(InetSocketAddress(InetAddress.getByAddress(dstIp), dstPort))
+                channel.configureBlocking(true)
                 socket = sock
-                logd("Tunnel $key connected")
+                logd("Tunnel $key connected local=${sock.localSocketAddress}")
 
                 val synAck = buildTcpPacket(0x12, ByteArray(0), 0) // SYN+ACK
                 mySeq++ // SYN consumes 1 seq number
@@ -274,8 +286,9 @@ class CaptureVpnService : VpnService() {
 
                 // Read from server, write to TUN
                 val buf = ByteArray(8192)
+                val input = channel.socket().getInputStream()
                 while (isRunning) {
-                    val len = sock.getInputStream().read(buf)
+                    val len = input.read(buf)
                     if (len <= 0) break
                     if (len > 0) {
                         val pkt = buildTcpPacket(0x18, buf, len) // PSH+ACK
@@ -422,6 +435,26 @@ class CaptureVpnService : VpnService() {
 
     private fun ipStr(ip: ByteArray): String =
         "${ip[0].toUByte()}.${ip[1].toUByte()}.${ip[2].toUByte()}.${ip[3].toUByte()}"
+
+    private fun findRealAddress(): InetAddress? {
+        try {
+            val interfaces = NetworkInterface.getNetworkInterfaces()
+            while (interfaces.hasMoreElements()) {
+                val iface = interfaces.nextElement()
+                if (iface.isLoopback || !iface.isUp) continue
+                if (iface.name == "tun0" || iface.name.startsWith("tun")) continue
+                val addresses = iface.inetAddresses
+                while (addresses.hasMoreElements()) {
+                    val addr = addresses.nextElement()
+                    if (!addr.isLoopbackAddress && addr.address.size == 4) {
+                        logi("Found real address: ${addr.hostAddress} on ${iface.name}")
+                        return addr
+                    }
+                }
+            }
+        } catch (_: Exception) {}
+        return null
+    }
 
     private fun buildNotification(): Notification {
         val pi = PendingIntent.getActivity(this, 0, Intent(this, MainActivity::class.java),
