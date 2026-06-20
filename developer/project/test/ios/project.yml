@@ -1,6 +1,5 @@
 name: VpnTest
 options:
-  bundleIdPrefix: com.networkspy.vpntest
   deploymentTarget:
     iOS: "15.0"
   xcodeVersion: "16.0"
@@ -24,6 +23,7 @@ targets:
       DEVELOPMENT_TEAM: ""
     dependencies:
       - target: PacketTunnel
+        embed: true
     preBuildScripts:
       - name: "Generate Bridging Header"
         script: |
