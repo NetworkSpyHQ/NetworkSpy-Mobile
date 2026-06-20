@@ -12,19 +12,6 @@ import android.os.ParcelFileDescriptor
 import android.util.Log
 import androidx.core.app.NotificationCompat
 import com.networkspy.mobile.MainActivity
-import java.io.FileInputStream
-import java.io.FileOutputStream
-import java.net.DatagramPacket
-import java.net.DatagramSocket
-import java.net.InetAddress
-import java.net.InetSocketAddress
-import java.net.NetworkInterface
-import java.net.Socket
-import java.nio.ByteBuffer
-import java.nio.channels.SocketChannel
-import java.util.concurrent.ConcurrentHashMap
-import java.util.concurrent.ExecutorService
-import java.util.concurrent.Executors
 
 class CaptureVpnService : VpnService() {
 
@@ -34,7 +21,6 @@ class CaptureVpnService : VpnService() {
         const val CHANNEL_ID = "vpn_capture"
         const val PROXY_PORT = 8888
 
-        // Set to false to disable all VPN logging
         private const val DEBUG = true
 
         private fun log(level: Int, msg: String, tr: Throwable? = null) {
@@ -68,20 +54,31 @@ class CaptureVpnService : VpnService() {
         fun stop(context: Context) {
             activeService?.stopVpn()
         }
+
+        init {
+            System.loadLibrary("vpn")
+        }
     }
+
+    // ── Native methods ─────────────────────────────────────────
+
+    private external fun jni_init()
+    private external fun jni_start(tunFd: Int, fwd53: Boolean, rcode: Int,
+                                    proxyIp: String, proxyPort: Int)
+    private external fun jni_stop(tunFd: Int)
+    private external fun jni_get_mtu(): Int
+    private external fun jni_done()
+
+    // ── Service state ───────────────────────────────────────────
 
     private var vpnInterface: ParcelFileDescriptor? = null
     private var proxyServer: HttpCaptureProxy? = null
-    private val executor: ExecutorService = Executors.newFixedThreadPool(16)
-    private val tcpTunnels = ConcurrentHashMap<String, TcpTunnel>()
-    private var tunOutput: FileOutputStream? = null
-
-    private val MAX_TCP_TUNNELS = 50
 
     override fun onCreate() {
         super.onCreate()
         activeService = this
         createNotificationChannel()
+        jni_init()
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
@@ -91,7 +88,7 @@ class CaptureVpnService : VpnService() {
 
     private fun startVpn() {
         if (isRunning) return
-        logd("Starting VPN")
+        logd("Starting VPN (native)")
 
         try {
             vpnInterface = Builder()
@@ -100,7 +97,7 @@ class CaptureVpnService : VpnService() {
                 .addRoute("0.0.0.0", 0)
                 .addDnsServer("8.8.8.8")
                 .addDnsServer("8.8.4.4")
-                .setMtu(1500)
+                .setMtu(jni_get_mtu())
                 .setBlocking(true)
                 .establish()
         } catch (e: IllegalStateException) {
@@ -118,16 +115,16 @@ class CaptureVpnService : VpnService() {
 
         startForeground(NOTIFICATION_ID, buildNotification())
 
-        tunOutput = FileOutputStream(vpnInterface!!.fileDescriptor)
-
         proxyServer = HttpCaptureProxy(PROXY_PORT, applicationContext)
         proxyServer?.start()
 
+        // Delegate all packet forwarding to native C library
+        val tunFd = vpnInterface!!.fd
+        jni_start(tunFd, false, 3, "127.0.0.1", PROXY_PORT)
+
         isRunning = true
         VpnModule.emitStatus("started")
-
-        executor.execute { packetLoop(vpnInterface!!) }
-        logd("VPN started with packet forwarding")
+        logd("VPN started (native forwarding)")
     }
 
     private fun stopVpn() {
@@ -135,343 +132,20 @@ class CaptureVpnService : VpnService() {
         logd("Stopping VPN")
         isRunning = false
 
+        vpnInterface?.let { jni_stop(it.fd) }
+
         try { vpnInterface?.close() } catch (_: Exception) {}
         vpnInterface = null
-        tunOutput = null
-
-        tcpTunnels.values.forEach { try { it.close() } catch (_: Exception) {} }
-        tcpTunnels.clear()
 
         try { proxyServer?.stop() } catch (_: Exception) {}
         proxyServer = null
-
-        executor.shutdown()
-        try { executor.awaitTermination(2, java.util.concurrent.TimeUnit.SECONDS) } catch (_: Exception) {}
-        executor.shutdownNow()
 
         VpnModule.emitStatus("stopped")
         stopForeground(STOP_FOREGROUND_REMOVE)
         stopSelf()
     }
 
-    private fun packetLoop(vpnFd: ParcelFileDescriptor) {
-        val input = FileInputStream(vpnFd.fileDescriptor)
-        val buffer = ByteArray(32767)
-        var count = 0L
-
-        try {
-            while (isRunning && !Thread.interrupted()) {
-                val len = input.read(buffer)
-                if (len <= 0) continue
-                count++
-                try {
-                    handlePacket(buffer, len)
-                } catch (e: Exception) {
-                    loge("Packet error: ${e.message}")
-                }
-
-                // Periodic stats
-                val now = System.currentTimeMillis()
-                if (now - lastLogTime > 10000) {
-                    logi("Stats: TCP=$packetTcp, UDP=$packetUdp, tunnels=${tcpTunnels.size}")
-                    packetTcp = 0; packetUdp = 0
-                    lastLogTime = now
-                }
-            }
-        } catch (e: Exception) {
-            if (isRunning) loge("Loop error: ${e.message}")
-        } finally {
-            logd("Packet loop ended. $count packets")
-        }
-    }
-
-    private fun handlePacket(data: ByteArray, length: Int) {
-        if (length < 20) return
-        val version = (data[0].toInt() shr 4) and 0x0F
-        if (version != 4) return
-
-        val protocol = data[9].toInt() and 0xFF
-        when (protocol) {
-            6 -> { packetTcp++; handleTcp(data, length) }
-            17 -> { packetUdp++; handleUdp(data, length) }
-        }
-    }
-
-    private var packetTcp = 0L
-    private var packetUdp = 0L
-    private var lastLogTime = System.currentTimeMillis()
-
-    // ── TCP ──────────────────────────────────────────────────
-
-    private fun handleTcp(data: ByteArray, length: Int) {
-        val ipHdrLen = (data[0].toInt() and 0x0F) * 4
-        if (length < ipHdrLen + 20) return
-
-        val srcIp = ByteArray(4); System.arraycopy(data, 12, srcIp, 0, 4)
-        val dstIp = ByteArray(4); System.arraycopy(data, 16, dstIp, 0, 4)
-        val srcPort = ((data[ipHdrLen].toInt() and 0xFF) shl 8) or (data[ipHdrLen + 1].toInt() and 0xFF)
-        val dstPort = ((data[ipHdrLen + 2].toInt() and 0xFF) shl 8) or (data[ipHdrLen + 3].toInt() and 0xFF)
-        val flags = data[ipHdrLen + 13].toInt() and 0xFF
-        val isSyn = (flags and 0x02) != 0
-        val isRst = (flags and 0x04) != 0
-        val isFin = (flags and 0x01) != 0
-        val tcpHdrLen = ((data[ipHdrLen + 12].toInt() shr 4) and 0x0F) * 4
-        val payloadOff = ipHdrLen + tcpHdrLen
-        val payloadLen = length - payloadOff
-        val seqNum = ByteBuffer.wrap(data, ipHdrLen + 4, 4).int
-        val key = "${ipStr(srcIp)}:$srcPort->${ipStr(dstIp)}:$dstPort"
-
-        if (dstPort == PROXY_PORT) return
-
-        if (isSyn && !isRst) {
-            if (tcpTunnels.containsKey(key)) return // ignore duplicate SYN
-            if (tcpTunnels.size >= MAX_TCP_TUNNELS) {
-                logw("TCP tunnel limit reached, dropping $key")
-                return
-            }
-            logi("TCP SYN $key (${tcpTunnels.size + 1}/${MAX_TCP_TUNNELS} tunnels)")
-            val tunnel = TcpTunnel(srcIp, dstIp, srcPort, dstPort, ipHdrLen, seqNum, key)
-            tcpTunnels[key] = tunnel
-            executor.execute { tunnel.run() }
-        } else if (isRst) {
-            logd("TCP RST $key")
-            tcpTunnels.remove(key)?.close()
-        } else if (isFin) {
-            logi("TCP FIN $key")
-            tcpTunnels[key]?.sendFin()
-        } else if (payloadLen > 0) {
-            tcpTunnels[key]?.sendData(data, payloadOff, payloadLen)
-        } else {
-            // ACK with no data (handshake completion or pure ACK)
-            // silently ignored
-        }
-    }
-
-    inner class TcpTunnel(
-        private val srcIp: ByteArray,
-        private val dstIp: ByteArray,
-        private val srcPort: Int,
-        private val dstPort: Int,
-        private val ipHdrLen: Int,
-        clientSeq: Int,
-        private val key: String
-    ) {
-        private var socket: Socket? = null
-        private var mySeq = (Math.random() * Int.MAX_VALUE).toInt()
-        private var clientSeqNum = clientSeq
-        private var sentSynAck = false
-
-        fun run() {
-            try {
-                logi("Tunnel connecting ${ipStr(dstIp)}:$dstPort (via $key)")
-                val channel = SocketChannel.open()
-                val sock = channel.socket()
-                sock.reuseAddress = true
-                val realAddr = findRealAddress()
-                if (realAddr != null) {
-                    sock.bind(InetSocketAddress(realAddr, 0))
-                    logi("Tunnel bound to $realAddr:${sock.localPort}")
-                } else {
-                    logw("No real address found, binding to default")
-                }
-                val protected = protect(sock)
-                logi("Tunnel protect()=$protected")
-                if (!protected) {
-                    loge("Tunnel protect() FAILED")
-                }
-                channel.connect(InetSocketAddress(InetAddress.getByAddress(dstIp), dstPort))
-                channel.configureBlocking(true)
-                socket = sock
-                logi("Tunnel connected! local=${sock.localSocketAddress} remote=${sock.remoteSocketAddress}")
-
-                val synAck = buildTcpPacket(0x12, ByteArray(0), 0) // SYN+ACK
-                mySeq++ // SYN consumes 1 seq number
-                sentSynAck = true
-
-                writeToTun(synAck)
-                logi("Tunnel $key SYN-ACK sent, seq=$mySeq, ack=${clientSeqNum + 1}")
-
-                // Read from server, write to TUN
-                val buf = ByteArray(8192)
-                val input = channel.socket().getInputStream()
-                while (isRunning) {
-                    val len = input.read(buf)
-                    if (len <= 0) break
-                    if (len > 0) {
-                        val pkt = buildTcpPacket(0x18, buf, len) // PSH+ACK
-                        writeToTun(pkt)
-                        val oldSeq = mySeq
-                        mySeq += len
-                        logi("Tunnel $key recv $len bytes from server, seq $oldSeq -> $mySeq, ack ${clientSeqNum + 1}")
-                    }
-                }
-                logd("Tunnel $key server closed")
-            } catch (e: Exception) {
-                loge("Tunnel $key error: ${e.javaClass.simpleName} - ${e.message}", e)
-            }
-            close()
-        }
-
-        fun sendData(data: ByteArray, off: Int, len: Int) {
-            try {
-                socket?.getOutputStream()?.write(data, off, len)
-                val oldSeq = clientSeqNum
-                clientSeqNum += len
-                logi("Tunnel $key sent $len bytes to server, clientSeq $oldSeq -> $clientSeqNum")
-            } catch (e: Exception) {
-                loge("Tunnel $key sendData error: ${e.message}")
-                close()
-            }
-        }
-
-        fun sendFin() {
-            try { socket?.shutdownOutput() } catch (_: Exception) {}
-            close()
-        }
-
-        fun close() {
-            tcpTunnels.remove(key)
-            try {
-                val s = socket
-                socket = null
-                if (s != null && !s.isClosed) {
-                    s.close()
-                }
-            } catch (_: Exception) {}
-        }
-
-        private fun buildTcpPacket(flags: Int, payload: ByteArray, payloadLen: Int): ByteArray {
-            val tcpLen = 20 + payloadLen
-            val totalLen = ipHdrLen + tcpLen
-            val pkt = ByteArray(totalLen)
-
-            // IP header
-            pkt[0] = 0x45.toByte()
-            pkt[2] = ((totalLen shr 8) and 0xFF).toByte()
-            pkt[3] = (totalLen and 0xFF).toByte()
-            pkt[8] = 64; pkt[9] = 6 // TTL, TCP
-            System.arraycopy(dstIp, 0, pkt, 12, 4) // src = original dst
-            System.arraycopy(srcIp, 0, pkt, 16, 4) // dst = original src
-
-            // TCP header
-            pkt[ipHdrLen] = ((dstPort shr 8) and 0xFF).toByte()
-            pkt[ipHdrLen + 1] = (dstPort and 0xFF).toByte()
-            pkt[ipHdrLen + 2] = ((srcPort shr 8) and 0xFF).toByte()
-            pkt[ipHdrLen + 3] = (srcPort and 0xFF).toByte()
-            // Seq
-            putInt32(pkt, ipHdrLen + 4, mySeq)
-            // Ack
-            putInt32(pkt, ipHdrLen + 8, clientSeqNum + 1)
-            // Data offset + flags
-            pkt[ipHdrLen + 12] = 0x50.toByte()
-            pkt[ipHdrLen + 13] = flags.toByte()
-            // Window
-            pkt[ipHdrLen + 14] = 0xFF.toByte()
-            pkt[ipHdrLen + 15] = 0xFF.toByte()
-
-            System.arraycopy(payload, 0, pkt, ipHdrLen + 20, payloadLen)
-            return pkt
-        }
-
-        private fun putInt32(buf: ByteArray, off: Int, v: Int) {
-            buf[off] = ((v shr 24) and 0xFF).toByte()
-            buf[off + 1] = ((v shr 16) and 0xFF).toByte()
-            buf[off + 2] = ((v shr 8) and 0xFF).toByte()
-            buf[off + 3] = (v and 0xFF).toByte()
-        }
-    }
-
-    // ── UDP ──────────────────────────────────────────────────
-
-    private fun handleUdp(data: ByteArray, length: Int) {
-        val ipHdrLen = (data[0].toInt() and 0x0F) * 4
-        if (length < ipHdrLen + 8) return
-
-        val srcIp = ByteArray(4); System.arraycopy(data, 12, srcIp, 0, 4)
-        val dstIp = ByteArray(4); System.arraycopy(data, 16, dstIp, 0, 4)
-        val srcPort = ((data[ipHdrLen].toInt() and 0xFF) shl 8) or (data[ipHdrLen + 1].toInt() and 0xFF)
-        val dstPort = ((data[ipHdrLen + 2].toInt() and 0xFF) shl 8) or (data[ipHdrLen + 3].toInt() and 0xFF)
-        val udpLen = ((data[ipHdrLen + 4].toInt() and 0xFF) shl 8) or (data[ipHdrLen + 5].toInt() and 0xFF)
-        val payloadOff = ipHdrLen + 8
-        val payloadLen = minOf(length - payloadOff, udpLen - 8)
-
-        if (payloadLen <= 0) return
-
-        logd("UDP ${ipStr(srcIp)}:$srcPort -> ${ipStr(dstIp)}:$dstPort len=$payloadLen")
-
-        executor.execute {
-            try {
-                DatagramSocket().use { socket ->
-                    protect(socket)
-                    socket.soTimeout = 10000
-                    val payload = ByteArray(payloadLen)
-                    System.arraycopy(data, payloadOff, payload, 0, payloadLen)
-                    socket.send(DatagramPacket(payload, payloadLen, InetAddress.getByAddress(dstIp), dstPort))
-
-                    val respBuf = ByteArray(4096)
-                    val resp = DatagramPacket(respBuf, respBuf.size)
-                    socket.receive(resp)
-
-                    // Write UDP response back to TUN
-                    val pkt = buildUdpPacket(dstIp, srcIp, dstPort, srcPort, resp.data, resp.length)
-                    writeToTun(pkt)
-                    logd("UDP response ${ipStr(dstIp)}:$dstPort -> ${ipStr(srcIp)}:$srcPort len=${resp.length}")
-                }
-            } catch (_: Exception) {}
-        }
-    }
-
-    private fun buildUdpPacket(
-        srcIp: ByteArray, dstIp: ByteArray,
-        srcPort: Int, dstPort: Int,
-        payload: ByteArray, payloadLen: Int
-    ): ByteArray {
-        val udpLen = 8 + payloadLen
-        val totalLen = 20 + udpLen
-        val pkt = ByteArray(totalLen)
-
-        pkt[0] = 0x45.toByte()
-        pkt[2] = ((totalLen shr 8) and 0xFF).toByte(); pkt[3] = (totalLen and 0xFF).toByte()
-        pkt[8] = 64; pkt[9] = 17 // TTL, UDP
-        System.arraycopy(srcIp, 0, pkt, 12, 4)
-        System.arraycopy(dstIp, 0, pkt, 16, 4)
-
-        pkt[20] = ((srcPort shr 8) and 0xFF).toByte(); pkt[21] = (srcPort and 0xFF).toByte()
-        pkt[22] = ((dstPort shr 8) and 0xFF).toByte(); pkt[23] = (dstPort and 0xFF).toByte()
-        pkt[24] = ((udpLen shr 8) and 0xFF).toByte(); pkt[25] = (udpLen and 0xFF).toByte()
-
-        System.arraycopy(payload, 0, pkt, 28, payloadLen)
-        return pkt
-    }
-
-    // ── helpers ──────────────────────────────────────────────
-
-    private fun writeToTun(pkt: ByteArray) {
-        tunOutput?.let { synchronized(it) { it.write(pkt) } }
-    }
-
-    private fun ipStr(ip: ByteArray): String =
-        "${ip[0].toUByte()}.${ip[1].toUByte()}.${ip[2].toUByte()}.${ip[3].toUByte()}"
-
-    private fun findRealAddress(): InetAddress? {
-        try {
-            val interfaces = NetworkInterface.getNetworkInterfaces() ?: return null
-            while (interfaces.hasMoreElements()) {
-                val iface = interfaces.nextElement()
-                if (iface.isLoopback || !iface.isUp) continue
-                if (iface.name == "tun0" || iface.name.startsWith("tun")) continue
-                val addresses = iface.inetAddresses
-                while (addresses.hasMoreElements()) {
-                    val addr = addresses.nextElement()
-                    if (!addr.isLoopbackAddress && addr.address.size == 4) {
-                        logi("Found real address: ${addr.hostAddress} on ${iface.name}")
-                        return addr
-                    }
-                }
-            }
-        } catch (_: Exception) {}
-        return null
-    }
+    // ── Notification / lifecycle ────────────────────────────────
 
     private fun buildNotification(): Notification {
         val pi = PendingIntent.getActivity(this, 0, Intent(this, MainActivity::class.java),
@@ -495,6 +169,7 @@ class CaptureVpnService : VpnService() {
     override fun onDestroy() {
         activeService = null
         stopVpn()
+        jni_done()
         super.onDestroy()
     }
 
