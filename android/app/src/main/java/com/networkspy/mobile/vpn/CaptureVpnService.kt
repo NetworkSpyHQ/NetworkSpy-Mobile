@@ -237,10 +237,13 @@ class CaptureVpnService : VpnService() {
             logd("TCP RST $key")
             tcpTunnels.remove(key)?.close()
         } else if (isFin) {
-            logd("TCP FIN $key")
+            logi("TCP FIN $key")
             tcpTunnels[key]?.sendFin()
         } else if (payloadLen > 0) {
             tcpTunnels[key]?.sendData(data, payloadOff, payloadLen)
+        } else {
+            // ACK with no data (handshake completion or pure ACK)
+            // silently ignored
         }
     }
 
@@ -286,7 +289,7 @@ class CaptureVpnService : VpnService() {
                 sentSynAck = true
 
                 writeToTun(synAck)
-                logd("Tunnel $key SYN-ACK sent")
+                logi("Tunnel $key SYN-ACK sent, seq=$mySeq, ack=${clientSeqNum + 1}")
 
                 // Read from server, write to TUN
                 val buf = ByteArray(8192)
@@ -297,7 +300,9 @@ class CaptureVpnService : VpnService() {
                     if (len > 0) {
                         val pkt = buildTcpPacket(0x18, buf, len) // PSH+ACK
                         writeToTun(pkt)
+                        val oldSeq = mySeq
                         mySeq += len
+                        logi("Tunnel $key recv $len bytes from server, seq $oldSeq -> $mySeq, ack ${clientSeqNum + 1}")
                     }
                 }
                 logd("Tunnel $key server closed")
@@ -310,8 +315,11 @@ class CaptureVpnService : VpnService() {
         fun sendData(data: ByteArray, off: Int, len: Int) {
             try {
                 socket?.getOutputStream()?.write(data, off, len)
+                val oldSeq = clientSeqNum
                 clientSeqNum += len
-            } catch (_: Exception) {
+                logi("Tunnel $key sent $len bytes to server, clientSeq $oldSeq -> $clientSeqNum")
+            } catch (e: Exception) {
+                loge("Tunnel $key sendData error: ${e.message}")
                 close()
             }
         }
