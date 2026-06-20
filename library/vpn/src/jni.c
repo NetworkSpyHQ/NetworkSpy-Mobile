@@ -178,18 +178,24 @@ static void vpn_stop(JNIEnv *env, jobject instance, jint tunFd) {
     LOGI("VPN stopping...");
     g_ctx->running = false;
 
+    // Shutdown TUN fd to unblock reader thread (Kotlin will close it)
+    if (g_ctx->tun_fd >= 0) {
+        shutdown(g_ctx->tun_fd, SHUT_RD);
+        g_ctx->tun_fd = -1;
+    }
+
     // Signal shutdown via pipe
     if (g_ctx->shutdown_pipe[1] >= 0) {
         write(g_ctx->shutdown_pipe[1], "x", 1);
-        close(g_ctx->shutdown_pipe[1]);
-        g_ctx->shutdown_pipe[1] = -1;
     }
     if (g_ctx->shutdown_pipe[0] >= 0) {
         close(g_ctx->shutdown_pipe[0]);
         g_ctx->shutdown_pipe[0] = -1;
     }
-
-    g_ctx->tun_fd = -1;
+    if (g_ctx->shutdown_pipe[1] >= 0) {
+        close(g_ctx->shutdown_pipe[1]);
+        g_ctx->shutdown_pipe[1] = -1;
+    }
 
     // Close all sessions
     pthread_mutex_lock(&g_ctx->sessions_lock);
