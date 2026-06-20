@@ -6,6 +6,7 @@
 #include <time.h>
 #include <fcntl.h>
 #include <netinet/in.h>
+#include <arpa/inet.h>
 
 static void build_tcp_header(uint8_t *pkt, int offset,
                              uint16_t src_port, uint16_t dst_port,
@@ -231,12 +232,20 @@ void handle_tcp_packet(struct vpn_context *ctx,
             return;
         }
 
-        // Connect to destination
+        // Connect to destination (or proxy)
         struct sockaddr_in addr;
         memset(&addr, 0, sizeof(addr));
         addr.sin_family = AF_INET;
-        addr.sin_port = htons(dst_port);
-        addr.sin_addr.s_addr = htonl(dst_ip);
+
+        bool use_proxy = false;
+        if (ctx->proxy_port > 0 && ctx->proxy_ip[0] != '\0') {
+            addr.sin_port = htons((uint16_t)ctx->proxy_port);
+            addr.sin_addr.s_addr = inet_addr(ctx->proxy_ip);
+            use_proxy = true;
+        } else {
+            addr.sin_port = htons(dst_port);
+            addr.sin_addr.s_addr = htonl(dst_ip);
+        }
 
         if (connect_with_timeout(s->socket_fd, &addr, TCP_CONNECT_TIMEOUT) < 0) {
             LOGW("TCP connect failed %u.%u.%u.%u:%u: %s",
@@ -262,9 +271,19 @@ void handle_tcp_packet(struct vpn_context *ctx,
         s->state = S_CONNECTED;
         s->active = true;
 
-        LOGI("TCP connected %u.%u.%u.%u:%u",
+        if (use_proxy) {
+            char proxy_buf[128];
+            int proxy_len = snprintf(proxy_buf, sizeof(proxy_buf),
+                                     "HOST:%u.%u.%u.%u:%d\n",
+                                     (dst_ip >> 24) & 0xFF, (dst_ip >> 16) & 0xFF,
+                                     (dst_ip >> 8) & 0xFF, dst_ip & 0xFF, dst_port);
+            write(s->socket_fd, proxy_buf, proxy_len);
+        }
+
+        LOGI("TCP connected %u.%u.%u.%u:%u%s",
              (dst_ip >> 24) & 0xFF, (dst_ip >> 16) & 0xFF,
-             (dst_ip >> 8) & 0xFF, dst_ip & 0xFF, dst_port);
+             (dst_ip >> 8) & 0xFF, dst_ip & 0xFF, dst_port,
+             use_proxy ? " (via proxy)" : "");
 
         // Send SYN-ACK
         int total_len = ip_header_len + 20;

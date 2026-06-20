@@ -10,7 +10,6 @@ import android.widget.TextView
 import android.widget.LinearLayout
 import android.widget.Toast
 import android.widget.FrameLayout
-import android.view.Gravity
 import android.graphics.Color
 import android.graphics.Typeface
 
@@ -30,15 +29,9 @@ class MainActivity : Activity() {
     private lateinit var stopButton: Button
 
     data class CaptureEntry(
-        val id: Int,
-        val type: String,
-        val method: String,
-        val url: String,
-        val host: String,
-        val status: Int,
-        val contentType: String,
-        val headers: String,
-        val bodyHex: String
+        val id: Int, val type: String, val method: String, val url: String,
+        val host: String, val status: Int, val contentType: String,
+        val headers: String, val bodyHex: String, val proxyData: String
     )
 
     private val captureEntries = mutableListOf<CaptureEntry>()
@@ -68,29 +61,30 @@ class MainActivity : Activity() {
         }
         root.addView(hashText)
 
-        val buttonRow = LinearLayout(this).apply {
-            orientation = LinearLayout.HORIZONTAL
-        }
-        val startButton = Button(this).apply {
+        val buttonRow = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
+        startButton = Button(this).apply {
             text = "Start VPN"
             setOnClickListener { prepareAndStartVpn() }
         }
-        this.startButton = startButton
         buttonRow.addView(startButton)
-        val stopButton = Button(this).apply {
+        stopButton = Button(this).apply {
             text = "Stop VPN"
             isEnabled = false
             setOnClickListener { stopVpn() }
         }
-        this.stopButton = stopButton
         buttonRow.addView(stopButton)
         root.addView(buttonRow)
+
+        val certButton = Button(this).apply {
+            text = "Install CA Cert"
+            setOnClickListener { installCACert() }
+        }
+        root.addView(certButton)
 
         tabContainer = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             setPadding(0, 12, 0, 4)
         }
-
         trafficTab = createTab("Traffic", true) { showTraffic() }
         captureTab = createTab("Capture", false) { showCapture() }
         tabContainer.addView(trafficTab)
@@ -115,9 +109,7 @@ class MainActivity : Activity() {
         }
 
         val contentFrame = FrameLayout(this).apply {
-            layoutParams = LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.MATCH_PARENT, 0, 1f
-            )
+            layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, 0, 1f)
         }
         contentFrame.addView(trafficScroll)
         contentFrame.addView(captureScroll)
@@ -165,9 +157,9 @@ class MainActivity : Activity() {
 
     private fun handleCapture(json: String) {
         try {
-            val entries = parseHttpJson(json)
-            if (entries != null) {
-                captureEntries.add(entries)
+            val entry = parseHttpJson(json)
+            if (entry != null) {
+                captureEntries.add(entry)
                 runOnUiThread { refreshCaptureLog() }
             }
         } catch (_: Exception) {}
@@ -183,11 +175,11 @@ class MainActivity : Activity() {
         var contentType = ""
         var headersHex = ""
         var bodyHex = ""
+        var proxyData = ""
 
-        val pairs = json.removeSurrounding("{", "}").replace("\\\\\"", "'").split("\",") .joinToString("\n").split(",\"") .joinToString("\n").split(",")
-        val tokens = json.removeSurrounding("{", "}").split(",\"")
-        for (token in tokens) {
-            val clean = token.trim().removeSurrounding("\"")
+        val pairs = json.removeSurrounding("{", "}").split(",\"")
+        for (pair in pairs) {
+            val clean = pair.trim().removeSurrounding("\"")
             val colon = clean.indexOf(':')
             if (colon < 0) continue
             val key = clean.substring(0, colon).trim().removeSurrounding("\"")
@@ -198,141 +190,126 @@ class MainActivity : Activity() {
                 "type" -> type = value
                 "hdr_hex" -> headersHex = value
                 "body_hex" -> bodyHex = value
+                "host" -> host = value
+                "data" -> proxyData = value
             }
+        }
 
-            if (type == "request") {
-                val headerText = hexToString(headersHex)
-                val lines = headerText.split("\r\n")
-                if (lines.isNotEmpty()) {
-                    val firstLine = lines[0].split(" ")
-                    if (firstLine.size >= 2) {
-                        method = firstLine[0]
-                        url = firstLine[1]
-                    }
-                }
-                for (line in lines) {
-                    if (line.lowercase().startsWith("host:")) {
-                        host = line.substring(5).trim()
-                    }
-                }
+        if (type == "request") {
+            val headerText = hexToString(headersHex)
+            val lines = headerText.split("\r\n")
+            if (lines.isNotEmpty()) {
+                val firstLine = lines[0].split(" ")
+                if (firstLine.size >= 2) { method = firstLine[0]; url = firstLine[1] }
             }
+            for (line in lines) {
+                if (line.lowercase().startsWith("host:")) host = line.substring(5).trim()
+            }
+        }
 
-            if (type == "response") {
-                val headerText = hexToString(headersHex)
-                val lines = headerText.split("\r\n")
-                if (lines.isNotEmpty()) {
-                    val firstLine = lines[0].split(" ")
-                    if (firstLine.size >= 2) {
-                        status = firstLine[1].toIntOrNull() ?: 0
-                    }
-                }
-                for (line in lines) {
-                    if (line.lowercase().startsWith("content-type:")) {
-                        contentType = line.substring(13).trim()
-                    }
-                }
+        if (type == "response" && headersHex.isNotEmpty()) {
+            val headerText = hexToString(headersHex)
+            val lines = headerText.split("\r\n")
+            if (lines.isNotEmpty() && lines[0].startsWith("HTTP/")) {
+                val parts = lines[0].split(" ")
+                if (parts.size >= 2) status = parts[1].toIntOrNull() ?: 0
             }
+            for (line in lines) {
+                if (line.lowercase().startsWith("content-type:"))
+                    contentType = line.substring(13).trim()
+            }
+        }
+
+        if (type.startsWith("proxy_")) {
+            id = (captureEntries.size + 1) * 1000 + 1
+            val ptype = type.removePrefix("proxy_")
+            return CaptureEntry(id, ptype, "", "", host, 0, "",
+                proxyData.replace("\\\\n", "\n").replace("\\\\r", "\r"), "", proxyData)
         }
 
         if (id == 0) return null
-
-        val existing = captureEntries.find { it.id == id }
-        if (existing != null) {
-            val idx = captureEntries.indexOf(existing)
-            val merged = existing.copy(
-                type = if (type == "response" || type == "request") type else existing.type,
-                method = if (method.isNotEmpty()) method else existing.method,
-                url = if (url.isNotEmpty()) url else existing.url,
-                host = if (host.isNotEmpty()) host else existing.host,
-                status = if (status > 0) status else existing.status,
-                contentType = if (contentType.isNotEmpty()) contentType else existing.contentType,
-                headers = if (headersHex.isNotEmpty()) hexToString(headersHex) else existing.headers,
-                bodyHex = if (bodyHex.isNotEmpty()) bodyHex else existing.bodyHex
-            )
-            captureEntries[idx] = merged
-            return merged
-        }
-
         return CaptureEntry(id, type, method, url, host, status, contentType,
-            hexToString(headersHex), bodyHex)
+            hexToString(headersHex), bodyHex, "")
     }
 
     private fun hexToString(hex: String): String {
         if (hex.isEmpty()) return ""
         return try {
             val bytes = ByteArray(hex.length / 2)
-            for (i in bytes.indices) {
-                bytes[i] = hex.substring(i * 2, i * 2 + 2).toInt(16).toByte()
-            }
+            for (i in bytes.indices) bytes[i] = hex.substring(i * 2, i * 2 + 2).toInt(16).toByte()
             String(bytes)
         } catch (_: Exception) { hex }
     }
 
     private fun refreshCaptureLog() {
         val sb = StringBuilder()
-        val formatter = java.text.SimpleDateFormat("HH:mm:ss", java.util.Locale.getDefault())
+        val fmt = java.text.SimpleDateFormat("HH:mm:ss", java.util.Locale.getDefault())
+        val now = fmt.format(java.util.Date())
 
-        for (entry in captureEntries.reversed()) {
-            val ts = formatter.format(java.util.Date())
+        for (entry in captureEntries.reversed().take(50)) {
             val icon = when (entry.type) {
                 "https" -> "\uD83D\uDD12"
                 "request" -> "\u2191"
                 else -> "\u2193"
             }
             val status = if (entry.status > 0) " ${entry.status}" else ""
-
             val line = when {
                 entry.type == "https" -> "$icon https://${entry.host}"
-                entry.type == "request" -> "$icon ${entry.method}$status ${entry.host}${entry.url}"
-                else -> "$icon$status ${entry.contentType}"
+                else -> "$icon$status ${entry.host}"
             }
-            sb.append("[$ts] $line\n")
-
-            if (entry.headers.isNotEmpty() && entry.headers.length > 4) {
-                val preview = entry.headers.split("\r\n").take(6).joinToString("\n")
-                sb.append("$preview\n")
-            }
+            sb.append("[$now] $line\n")
+            if (entry.proxyData.isNotEmpty())
+                sb.append("${entry.proxyData.take(500)}\n")
+            else if (entry.headers.isNotEmpty())
+                sb.append("${entry.headers.split("\r\n").take(5).joinToString("\n")}\n")
         }
 
-        if (sb.isEmpty()) {
-            sb.append("No HTTP traffic captured yet.\n")
-            sb.append("Visit a website in your browser after starting VPN.\n")
-        }
-
+        if (sb.isEmpty()) sb.append("No traffic captured. Start VPN and browse.\n")
         captureLog.text = sb.toString()
     }
 
     private fun appendLog(msg: String) {
         runOnUiThread {
-            val timestamp = java.text.SimpleDateFormat("HH:mm:ss", java.util.Locale.getDefault())
-                .format(java.util.Date())
-            trafficLog.append("[$timestamp] $msg\n")
+            val ts = java.text.SimpleDateFormat("HH:mm:ss", java.util.Locale.getDefault()).format(java.util.Date())
+            trafficLog.append("[$ts] $msg\n")
+        }
+    }
+
+    private fun installCACert() {
+        try {
+            val certData = HttpsCertManager.getCAInstallData()
+            if (certData == null) {
+                Toast.makeText(this, "CA not generated. Start VPN first.", Toast.LENGTH_LONG).show()
+                return
+            }
+            val intent = android.content.Intent("android.security.INSTALL_CERTIFICATE")
+            intent.putExtra("name", "VPN Test CA")
+            intent.putExtra("certificate", android.util.Base64.decode(certData, android.util.Base64.DEFAULT))
+            startActivity(intent)
+            appendLog("CA install prompted")
+        } catch (e: Exception) {
+            Toast.makeText(this, "Install error: ${e.message}", Toast.LENGTH_LONG).show()
         }
     }
 
     private fun prepareAndStartVpn() {
         val intent = VpnService.prepare(this)
-        if (intent != null) {
-            startActivityForResult(intent, VPN_REQUEST_CODE)
-        } else {
-            startVpnService()
-        }
+        if (intent != null) startActivityForResult(intent, VPN_REQUEST_CODE)
+        else startVpnService()
     }
 
     private fun startVpnService() {
+        HttpsCertManager.init(this)
         val intent = Intent(this, VpnTestService::class.java)
-        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) {
+        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O)
             startForegroundService(intent)
-        } else {
-            startService(intent)
-        }
+        else startService(intent)
         updateUI(true)
     }
 
     private fun stopVpn() {
         VpnTestService.activeService?.stopVpn()
-        val intent = Intent(this, VpnTestService::class.java)
-        stopService(intent)
+        stopService(Intent(this, VpnTestService::class.java))
         updateUI(false)
     }
 
@@ -351,13 +328,10 @@ class MainActivity : Activity() {
     @Deprecated("Deprecated in Java")
     override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
         super.onActivityResult(requestCode, resultCode, data)
-        if (requestCode == VPN_REQUEST_CODE) {
-            if (resultCode == Activity.RESULT_OK) {
-                startVpnService()
-            } else {
-                Toast.makeText(this, "VPN permission denied", Toast.LENGTH_SHORT).show()
-            }
-        }
+        if (requestCode == VPN_REQUEST_CODE && resultCode == Activity.RESULT_OK)
+            startVpnService()
+        else if (requestCode == VPN_REQUEST_CODE)
+            Toast.makeText(this, "VPN permission denied", Toast.LENGTH_SHORT).show()
     }
 
     override fun onDestroy() {

@@ -17,6 +17,7 @@ class VpnTestService : VpnService() {
         private const val TAG = "VpnTestService"
         private const val NOTIFICATION_ID = 1
         private const val CHANNEL_ID = "vpn_test_channel"
+        const val PROXY_PORT = 8888
 
         @Volatile var isRunning = false
         @Volatile var activeService: VpnTestService? = null
@@ -52,10 +53,12 @@ class VpnTestService : VpnService() {
     // ── State ──────────────────────────────────────────────────
 
     private var vpnInterface: ParcelFileDescriptor? = null
+    private var proxy: HttpsProxy? = null
 
     override fun onCreate() {
         super.onCreate()
         activeService = this
+        HttpsCertManager.init(this)
         createNotificationChannel()
         jni_init()
         Log.i(TAG, "Service created, native lib initialized")
@@ -95,7 +98,13 @@ class VpnTestService : VpnService() {
 
         startForeground(NOTIFICATION_ID, buildNotification())
 
-        jni_start(vpnInterface!!.fd, false, 3, "", 0)
+        proxy = HttpsProxy(PROXY_PORT).also {
+            it.onCapture = { json -> captureListener?.invoke(json) }
+            it.start()
+        }
+        listener?.invoke("Proxy started on port $PROXY_PORT")
+
+        jni_start(vpnInterface!!.fd, false, 3, "127.0.0.1", PROXY_PORT)
 
         isRunning = true
         listener?.invoke("VPN started")
@@ -111,6 +120,9 @@ class VpnTestService : VpnService() {
         vpnInterface?.let { jni_stop(it.fd) }
         try { vpnInterface?.close() } catch (_: Exception) {}
         vpnInterface = null
+
+        try { proxy?.stop() } catch (_: Exception) {}
+        proxy = null
 
         listener?.invoke("VPN stopped")
         Log.i(TAG, "VPN stopped")
