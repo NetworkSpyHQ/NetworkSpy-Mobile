@@ -15,11 +15,17 @@ android {
         versionCode = 1
         versionName = "1.0"
 
+        buildConfigField("String", "GIT_HASH", "\"${providers.exec { commandLine("git", "rev-parse", "--short=7", "HEAD") }.standardOutput.asText.get().trim()}\"")
+
         externalNativeBuild {
             cmake {
                 cppFlags("")
             }
         }
+    }
+
+    buildFeatures {
+        buildConfig = true
     }
 
     externalNativeBuild {

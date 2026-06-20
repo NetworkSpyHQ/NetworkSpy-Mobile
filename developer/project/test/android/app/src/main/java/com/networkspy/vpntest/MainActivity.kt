@@ -9,6 +9,7 @@ import android.widget.ScrollView
 import android.widget.TextView
 import android.widget.LinearLayout
 import android.widget.Toast
+import com.networkspy.vpntest.BuildConfig
 
 class MainActivity : Activity() {
 
@@ -31,9 +32,16 @@ class MainActivity : Activity() {
         statusText = TextView(this).apply {
             text = "VPN Status: Idle"
             textSize = 18f
-            setPadding(0, 0, 0, 16)
+            setPadding(0, 0, 0, 4)
         }
         layout.addView(statusText)
+
+        val hashText = TextView(this).apply {
+            text = BuildConfig.GIT_HASH
+            textSize = 11f
+            setPadding(0, 0, 0, 16)
+        }
+        layout.addView(hashText)
 
         startButton = Button(this).apply {
             text = "Start VPN"
