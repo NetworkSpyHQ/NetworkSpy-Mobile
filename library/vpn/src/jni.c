@@ -23,6 +23,7 @@ static void *tun_reader_thread(void *arg) {
             break;
         }
         if (len == 0) continue;
+        if (!ctx->running) break;
 
         handle_ip_packet(ctx, buffer, (int)len);
     }
@@ -230,14 +231,11 @@ static void vpn_done(JNIEnv *env, jobject instance) {
         vpn_stop(env, instance, g_ctx->tun_fd);
     }
 
-    pthread_mutex_destroy(&g_ctx->sessions_lock);
-
     if (g_ctx->instance) {
         (*env)->DeleteGlobalRef(env, g_ctx->instance);
         g_ctx->instance = NULL;
     }
 
-    free(g_ctx);
     g_ctx = NULL;
 
     LOGI("VPN library done");
