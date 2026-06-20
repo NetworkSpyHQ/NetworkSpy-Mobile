@@ -224,11 +224,11 @@ class CaptureVpnService : VpnService() {
         if (dstPort == PROXY_PORT) return
 
         if (isSyn && !isRst) {
+            if (tcpTunnels.containsKey(key)) return // ignore duplicate SYN
             if (tcpTunnels.size >= MAX_TCP_TUNNELS) {
                 logw("TCP tunnel limit reached, dropping $key")
                 return
             }
-            tcpTunnels[key]?.close()
             logi("TCP SYN $key (${tcpTunnels.size + 1}/${MAX_TCP_TUNNELS} tunnels)")
             val tunnel = TcpTunnel(srcIp, dstIp, srcPort, dstPort, ipHdrLen, seqNum, key)
             tcpTunnels[key] = tunnel
@@ -323,8 +323,13 @@ class CaptureVpnService : VpnService() {
 
         fun close() {
             tcpTunnels.remove(key)
-            logd("Tunnel $key closed")
-            try { socket?.close() } catch (_: Exception) {}
+            try {
+                val s = socket
+                socket = null
+                if (s != null && !s.isClosed) {
+                    s.close()
+                }
+            } catch (_: Exception) {}
         }
 
         private fun buildTcpPacket(flags: Int, payload: ByteArray, payloadLen: Int): ByteArray {
