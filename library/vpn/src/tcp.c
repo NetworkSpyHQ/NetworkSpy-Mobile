@@ -336,17 +336,25 @@ void handle_tcp_packet(struct vpn_context *ctx,
 
     // Forward data from client to server
     if (payload_len > 0 && s->socket_fd >= 0 && s->state == S_CONNECTED) {
+        // Check for HTTP/HTTPS BEFORE forwarding to real server
+        if (!s->http_parsed) {
+            if (s->is_https) {
+                tls_extract_sni(s, packet + payload_off, payload_len);
+                if (s->http_parsed && s->sni_host[0]) {
+                    // SSL intercept - transfer socket to SSL thread
+                    tls_intercept(s);
+                    return;
+                }
+            } else {
+                http_check_request(s, packet + payload_off, payload_len);
+            }
+        }
+
         s->tx_bytes += payload_len;
         ssize_t n = write(s->socket_fd, packet + payload_off, payload_len);
         if (n < 0) {
             LOGE("TCP write to server failed: %s", strerror(errno));
             s->active = false;
-        } else if (!s->http_parsed) {
-            if (s->is_https) {
-                tls_extract_sni(s, packet + payload_off, payload_len);
-            } else {
-                http_check_request(s, packet + payload_off, payload_len);
-            }
         }
     }
 }

@@ -106,6 +106,7 @@ struct vpn_context {
     jmethodID mid_protect;
     jmethodID mid_on_traffic;
     jmethodID mid_on_http;
+    jmethodID mid_on_request_cert;
 #else
     vpn_protect_fn protect_cb;
     vpn_traffic_fn traffic_cb;

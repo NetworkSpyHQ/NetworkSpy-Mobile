@@ -49,6 +49,12 @@ class VpnTestService : VpnService() {
         captureListener?.invoke(json)
     }
 
+    // Called from native code via JNI to get a cert for a hostname
+    @Suppress("unused")
+    private fun requestCert(hostname: String): String {
+        return HttpsCertManager.generateCertPEMForHost(hostname) ?: ""
+    }
+
     // ── State ──────────────────────────────────────────────────
 
     private var vpnInterface: ParcelFileDescriptor? = null

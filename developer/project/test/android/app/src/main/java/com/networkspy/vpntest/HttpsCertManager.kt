@@ -195,4 +195,18 @@ object HttpsCertManager {
             null
         }
     }
+
+    fun generateCertPEMForHost(hostname: String): String? {
+        val certKey = generateCertForHost(hostname) ?: return null
+        return try {
+            val sb = StringBuilder()
+            sb.append("-----BEGIN CERTIFICATE-----\n")
+            sb.append(Base64.encodeToString(certKey.certificate.encoded, Base64.DEFAULT))
+            sb.append("-----END CERTIFICATE-----\n")
+            sb.append("-----BEGIN PRIVATE KEY-----\n")
+            sb.append(Base64.encodeToString(certKey.privateKey.encoded, Base64.DEFAULT))
+            sb.append("-----END PRIVATE KEY-----\n")
+            sb.toString()
+        } catch (_: Exception) { null }
+    }
 }

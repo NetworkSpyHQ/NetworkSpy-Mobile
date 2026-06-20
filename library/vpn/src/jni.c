@@ -316,6 +316,11 @@ static void jni_vpn_init(JNIEnv *env, jobject instance) {
         LOGW("Failed to find onHttpCapture(String) method - HTTP capture disabled");
     }
 
+    g_ctx->mid_on_request_cert = (*env)->GetMethodID(env, cls, "requestCert", "(Ljava/lang/String;)Ljava/lang/String;");
+    if (!g_ctx->mid_on_request_cert) {
+        LOGW("Failed to find requestCert(String) method - SSL interception disabled");
+    }
+
     g_ctx->tun_fd = -1;
     g_ctx->shutdown_pipe[0] = -1;
     g_ctx->shutdown_pipe[1] = -1;
