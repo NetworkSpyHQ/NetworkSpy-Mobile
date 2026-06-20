@@ -229,20 +229,12 @@ void handle_tcp_packet(struct vpn_context *ctx,
             return;
         }
 
-        // Connect to destination (or proxy)
+        // Connect to destination
         struct sockaddr_in addr;
         memset(&addr, 0, sizeof(addr));
         addr.sin_family = AF_INET;
-
-        bool use_proxy = false;
-        if (ctx->proxy_port > 0 && ctx->proxy_ip[0] != '\0') {
-            addr.sin_port = htons((uint16_t)ctx->proxy_port);
-            addr.sin_addr.s_addr = inet_addr(ctx->proxy_ip);
-            use_proxy = true;
-        } else {
-            addr.sin_port = htons(dst_port);
-            addr.sin_addr.s_addr = htonl(dst_ip);
-        }
+        addr.sin_port = htons(dst_port);
+        addr.sin_addr.s_addr = htonl(dst_ip);
 
         if (connect_with_timeout(s->socket_fd, &addr, TCP_CONNECT_TIMEOUT) < 0) {
             LOGW("TCP connect failed %u.%u.%u.%u:%u: %s",
@@ -268,19 +260,9 @@ void handle_tcp_packet(struct vpn_context *ctx,
         s->state = S_CONNECTED;
         s->active = true;
 
-        if (use_proxy) {
-            char proxy_buf[128];
-            int proxy_len = snprintf(proxy_buf, sizeof(proxy_buf),
-                                     "HOST:%u.%u.%u.%u:%d\n",
-                                     (dst_ip >> 24) & 0xFF, (dst_ip >> 16) & 0xFF,
-                                     (dst_ip >> 8) & 0xFF, dst_ip & 0xFF, dst_port);
-            write(s->socket_fd, proxy_buf, proxy_len);
-        }
-
-        LOGI("TCP connected %u.%u.%u.%u:%u%s",
+        LOGI("TCP connected %u.%u.%u.%u:%u",
              (dst_ip >> 24) & 0xFF, (dst_ip >> 16) & 0xFF,
-             (dst_ip >> 8) & 0xFF, dst_ip & 0xFF, dst_port,
-             use_proxy ? " (via proxy)" : "");
+             (dst_ip >> 8) & 0xFF, dst_ip & 0xFF, dst_port);
 
         // Send SYN-ACK
         int total_len = ip_header_len + 20;
