@@ -25,6 +25,14 @@ object HttpsCertManager {
 
     @Volatile var rootCA: CertKeyPair? = null
 
+    @Volatile var initialized = false
+
+    fun ensureInitialized(context: Context) {
+        if (initialized) return
+        initialized = true
+        init(context)
+    }
+
     fun init(context: Context) {
         val ksFile = File(context.filesDir, "vpntest_ca.bks")
         if (ksFile.exists()) {

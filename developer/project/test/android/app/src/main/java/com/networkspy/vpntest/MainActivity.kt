@@ -39,6 +39,8 @@ class MainActivity : Activity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
+        HttpsCertManager.ensureInitialized(this)
+
         VpnTestService.listener = { msg -> appendLog(msg) }
         VpnTestService.captureListener = { json -> handleCapture(json) }
 
@@ -276,17 +278,25 @@ class MainActivity : Activity() {
     }
 
     private fun installCACert() {
+        HttpsCertManager.ensureInitialized(this)
+        val certData = HttpsCertManager.getCAInstallData()
+        if (certData == null) {
+            Toast.makeText(this, "Failed to generate CA certificate", Toast.LENGTH_LONG).show()
+            return
+        }
         try {
-            val certData = HttpsCertManager.getCAInstallData()
-            if (certData == null) {
-                Toast.makeText(this, "CA not generated. Start VPN first.", Toast.LENGTH_LONG).show()
-                return
+            if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.R) {
+                // Android 11+: direct user to Settings
+                val intent = android.content.Intent(android.provider.Settings.ACTION_SECURITY_SETTINGS)
+                startActivity(intent)
+                Toast.makeText(this, "Go to: Encryption & credentials > Install a certificate > CA certificate", Toast.LENGTH_LONG).show()
+            } else {
+                val intent = android.content.Intent("android.security.INSTALL_CERTIFICATE")
+                intent.putExtra("name", "VPN Test CA")
+                intent.putExtra("certificate", android.util.Base64.decode(certData, android.util.Base64.DEFAULT))
+                startActivity(intent)
+                appendLog("CA install prompted")
             }
-            val intent = android.content.Intent("android.security.INSTALL_CERTIFICATE")
-            intent.putExtra("name", "VPN Test CA")
-            intent.putExtra("certificate", android.util.Base64.decode(certData, android.util.Base64.DEFAULT))
-            startActivity(intent)
-            appendLog("CA install prompted")
         } catch (e: Exception) {
             Toast.makeText(this, "Install error: ${e.message}", Toast.LENGTH_LONG).show()
         }
@@ -299,7 +309,6 @@ class MainActivity : Activity() {
     }
 
     private fun startVpnService() {
-        HttpsCertManager.init(this)
         val intent = Intent(this, VpnTestService::class.java)
         if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O)
             startForegroundService(intent)
