@@ -201,5 +201,6 @@ void http_check_request(struct tcp_session *s, const uint8_t *data, int len);
 void http_check_response(struct tcp_session *s, const uint8_t *data, int len);
 void tls_extract_sni(struct tcp_session *s, const uint8_t *data, int len);
 void on_http_event(struct vpn_context *ctx, const char *event_json);
+void tls_intercept(struct tcp_session *s);
 
 #endif

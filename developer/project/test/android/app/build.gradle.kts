@@ -22,6 +22,10 @@ android {
                 cppFlags("")
             }
         }
+
+        ndk {
+            abiFilters += listOf("arm64-v8a")
+        }
     }
 
     buildFeatures {

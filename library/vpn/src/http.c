@@ -137,6 +137,8 @@ void tls_extract_sni(struct tcp_session *s, const uint8_t *data, int len) {
                      s->session_id, s->sni_host);
             s->http_parsed = true;
             on_http_event(g_ctx, json);
+
+            // TODO: spawn thread for tls_intercept(s)
             break;
         }
         pos += ext_data_len;
