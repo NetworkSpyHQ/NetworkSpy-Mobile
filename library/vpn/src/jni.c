@@ -48,8 +48,12 @@ void notify_traffic(struct vpn_context *ctx, const char *fmt, ...) {
     if (!ctx || !ctx->mid_on_traffic) return;
 
     JNIEnv *env;
+    bool attached = false;
     if ((*ctx->jvm)->GetEnv(ctx->jvm, (void **)&env, JNI_VERSION_1_6) != JNI_OK) {
-        return;
+        if ((*ctx->jvm)->AttachCurrentThread(ctx->jvm, &env, NULL) != JNI_OK) {
+            return;
+        }
+        attached = true;
     }
 
     char buf[256];
@@ -59,8 +63,14 @@ void notify_traffic(struct vpn_context *ctx, const char *fmt, ...) {
     va_end(args);
 
     jstring msg = (*env)->NewStringUTF(env, buf);
-    (*env)->CallVoidMethod(env, ctx->instance, ctx->mid_on_traffic, msg);
-    (*env)->DeleteLocalRef(env, msg);
+    if (msg) {
+        (*env)->CallVoidMethod(env, ctx->instance, ctx->mid_on_traffic, msg);
+        (*env)->DeleteLocalRef(env, msg);
+    }
+
+    if (attached) {
+        (*ctx->jvm)->DetachCurrentThread(ctx->jvm);
+    }
 }
 
 static void vpn_init(JNIEnv *env, jobject instance) {

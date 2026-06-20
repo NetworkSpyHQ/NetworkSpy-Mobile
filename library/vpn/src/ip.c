@@ -35,7 +35,12 @@ void handle_ip_packet(struct vpn_context *ctx, const uint8_t *buffer, int len) {
     if (len < 20) return;
 
     uint8_t version = (buffer[0] >> 4) & 0x0F;
-    if (version != 4) return;
+    if (version != 4) {
+        if (version == 6) {
+            LOGD("IPv6 packet dropped (len=%d)", len);
+        }
+        return;
+    }
 
     uint8_t ip_header_len = (buffer[0] & 0x0F) * 4;
     if (len < ip_header_len) return;
