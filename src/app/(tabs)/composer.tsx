@@ -1,5 +1,5 @@
-import { useMemo, useState } from 'react';
-import { ActivityIndicator, Platform, Pressable, SectionList, StyleSheet, Text, View } from 'react-native';
+import { useCallback, useMemo, useState } from 'react';
+import { ActivityIndicator, Modal, Platform, Pressable, SectionList, StyleSheet, Text, View, useColorScheme } from 'react-native';
 import { useRouter } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { fetch } from 'react-native-nitro-fetch';
@@ -9,37 +9,48 @@ import { ThemedView } from '@/components/themed-view';
 import { getComposes } from '@/data/compose-store';
 import {
   BottomTabInset,
+  Colors,
   MaxContentWidth,
   MethodColors,
   Spacing,
 } from '@/constants/theme';
 import type { ComposeEntry } from '@/types/traffic';
 
-function ComposeRow({ entry }: { entry: ComposeEntry }) {
+function ComposeRow({ entry, asyncMode }: { entry: ComposeEntry; asyncMode: boolean }) {
   const router = useRouter();
   const [sending, setSending] = useState(false);
-  const [lastResult, setLastResult] = useState<{ code: number; error?: string } | null>(null);
+  const [lastResult, setLastResult] = useState<{ code: number } | null>(null);
+  const [fireCount, setFireCount] = useState(0);
+
+  const sendRequest = useCallback(async () => {
+    let url = entry.url.trim();
+    if (!url.startsWith('http://') && !url.startsWith('https://')) {
+      url = `https://${url}`;
+    }
+    const headers: Record<string, string> = {};
+    for (const [k, v] of entry.headers) {
+      if (k.trim()) headers[k.trim()] = v;
+    }
+    const opts: RequestInit = { method: entry.method, headers };
+    if (entry.body && entry.method !== 'GET' && entry.method !== 'HEAD') {
+      opts.body = entry.body;
+    }
+    return fetch(url, opts);
+  }, [entry]);
 
   const handleSend = async () => {
+    if (asyncMode) {
+      sendRequest();
+      setFireCount(c => c + 1);
+      return;
+    }
     setSending(true);
     setLastResult(null);
     try {
-      let url = entry.url.trim();
-      if (!url.startsWith('http://') && !url.startsWith('https://')) {
-        url = `https://${url}`;
-      }
-      const headers: Record<string, string> = {};
-      for (const [k, v] of entry.headers) {
-        if (k.trim()) headers[k.trim()] = v;
-      }
-      const opts: RequestInit = { method: entry.method, headers };
-      if (entry.body && entry.method !== 'GET' && entry.method !== 'HEAD') {
-        opts.body = entry.body;
-      }
-      const res = await fetch(url, opts);
+      const res = await sendRequest();
       setLastResult({ code: res.status });
-    } catch (e: any) {
-      setLastResult({ code: 0, error: e.message });
+    } catch {
+      setLastResult({ code: 0 });
     } finally {
       setSending(false);
     }
@@ -77,11 +88,19 @@ function ComposeRow({ entry }: { entry: ComposeEntry }) {
       <View style={styles.rowRight}>
         {sending ? (
           <ActivityIndicator size="small" color="#3B82F6" />
+        ) : asyncMode && fireCount > 0 ? (
+          <View style={styles.fireBadge}>
+            <ThemedText type="small" style={{ color: '#F59E0B', fontFamily: Platform.select({ ios: 'ui-monospace', default: 'monospace' }) }}>
+              {fireCount}
+            </ThemedText>
+          </View>
         ) : lastResult ? (
           <ThemedText
             type="small"
-            themeColor={lastResult.code > 0 ? (lastResult.code < 400 ? 'textSecondary' : 'textSecondary') : 'textSecondary'}
-            style={{ color: lastResult.code === 0 ? '#EF4444' : lastResult.code >= 400 ? '#F59E0B' : '#22C55E' }}
+            style={{
+              color: lastResult.code === 0 ? '#EF4444' : lastResult.code >= 400 ? '#F59E0B' : '#22C55E',
+              fontFamily: Platform.select({ ios: 'ui-monospace', default: 'monospace' }),
+            }}
           >
             {lastResult.code || 'ERR'}
           </ThemedText>
@@ -99,9 +118,64 @@ function ComposeRow({ entry }: { entry: ComposeEntry }) {
   );
 }
 
+function SettingsSheet({
+  visible,
+  asyncMode,
+  onClose,
+  onToggleAsync,
+}: {
+  visible: boolean;
+  asyncMode: boolean;
+  onClose: () => void;
+  onToggleAsync: () => void;
+}) {
+  const scheme = useColorScheme();
+  const colors = Colors[scheme === 'unspecified' ? 'light' : scheme];
+
+  return (
+    <Modal visible={visible} animationType="fade" transparent onRequestClose={onClose}>
+      <Pressable style={styles.backdrop} onPress={onClose}>
+        <View />
+      </Pressable>
+      <View style={[styles.sheet, { backgroundColor: colors.background }]}>
+        <View style={styles.sheetHandle} />
+        <ThemedText type="smallBold" themeColor="textSecondary" style={styles.sheetLabel}>
+          Send Mode
+        </ThemedText>
+        <Pressable
+          style={({ pressed }) => [styles.sheetRow, pressed && styles.sheetRowPressed]}
+          onPress={() => { if (asyncMode) onToggleAsync(); onClose(); }}
+        >
+          <View style={styles.sheetRowContent}>
+            <View>
+              <ThemedText>Wait for response</ThemedText>
+              <ThemedText type="small" themeColor="textSecondary">Show status code after request</ThemedText>
+            </View>
+            {!asyncMode && <Text style={styles.checkmark}>✓</Text>}
+          </View>
+        </Pressable>
+        <Pressable
+          style={({ pressed }) => [styles.sheetRow, pressed && styles.sheetRowPressed]}
+          onPress={() => { if (!asyncMode) onToggleAsync(); onClose(); }}
+        >
+          <View style={styles.sheetRowContent}>
+            <View>
+              <ThemedText>Fire & forget</ThemedText>
+              <ThemedText type="small" themeColor="textSecondary">Send without waiting — spam OK</ThemedText>
+            </View>
+            {asyncMode && <Text style={styles.checkmark}>✓</Text>}
+          </View>
+        </Pressable>
+      </View>
+    </Modal>
+  );
+}
+
 export default function ComposerListScreen() {
   const composes = useMemo(() => getComposes(), []);
   const router = useRouter();
+  const [asyncMode, setAsyncMode] = useState(false);
+  const [menuVisible, setMenuVisible] = useState(false);
 
   const sections = useMemo(() => {
     if (composes.length === 0) return [];
@@ -113,12 +187,25 @@ export default function ComposerListScreen() {
       <SafeAreaView style={styles.safeArea} edges={['top']}>
         <View style={styles.header}>
           <ThemedText type="subtitle">Composer</ThemedText>
-          <Pressable
-            style={({ pressed }) => [styles.addButton, pressed && styles.addButtonPressed]}
-            onPress={() => router.push({ pathname: '/composer-detail', params: { id: 'new' } })}
-          >
-            <Text style={styles.addButtonText}>+</Text>
-          </Pressable>
+          <View style={styles.headerRight}>
+            {asyncMode && (
+              <View style={styles.asyncBadge}>
+                <ThemedText type="small" style={{ color: '#F59E0B' }}>⚡</ThemedText>
+              </View>
+            )}
+            <Pressable
+              style={({ pressed }) => [styles.addButton, pressed && styles.addButtonPressed]}
+              onPress={() => router.push({ pathname: '/composer-detail', params: { id: 'new' } })}
+            >
+              <Text style={styles.addButtonText}>+</Text>
+            </Pressable>
+            <Pressable
+              style={({ pressed }) => [styles.menuButton, pressed && styles.menuButtonPressed]}
+              onPress={() => setMenuVisible(true)}
+            >
+              <Text style={styles.menuDots}>⋮</Text>
+            </Pressable>
+          </View>
         </View>
 
         {composes.length === 0 ? (
@@ -131,7 +218,7 @@ export default function ComposerListScreen() {
           <SectionList
             sections={sections}
             keyExtractor={(item) => item.id}
-            renderItem={({ item }) => <ComposeRow entry={item} />}
+            renderItem={({ item }) => <ComposeRow entry={item} asyncMode={asyncMode} />}
             contentContainerStyle={styles.listContent}
             style={styles.list}
             ItemSeparatorComponent={Separator}
@@ -139,6 +226,13 @@ export default function ComposerListScreen() {
             stickySectionHeadersEnabled={false}
           />
         )}
+
+        <SettingsSheet
+          visible={menuVisible}
+          asyncMode={asyncMode}
+          onClose={() => setMenuVisible(false)}
+          onToggleAsync={() => setAsyncMode(a => !a)}
+        />
       </SafeAreaView>
     </ThemedView>
   );
@@ -166,6 +260,17 @@ const styles = StyleSheet.create({
     paddingHorizontal: Spacing.three,
     paddingVertical: Spacing.two,
   },
+  headerRight: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: Spacing.one,
+  },
+  asyncBadge: {
+    paddingHorizontal: Spacing.one,
+    paddingVertical: 2,
+    borderRadius: Spacing.one,
+    backgroundColor: 'rgba(245, 158, 11, 0.1)',
+  },
   addButton: {
     width: 32,
     height: 32,
@@ -182,6 +287,20 @@ const styles = StyleSheet.create({
     fontSize: 20,
     fontWeight: '600',
     lineHeight: 22,
+  },
+  menuButton: {
+    paddingHorizontal: Spacing.one,
+    paddingVertical: Spacing.one,
+    borderRadius: Spacing.one,
+  },
+  menuButtonPressed: {
+    opacity: 0.5,
+  },
+  menuDots: {
+    fontSize: 20,
+    fontWeight: '700',
+    color: '#6B7280',
+    letterSpacing: 1,
   },
   list: {
     flex: 1,
@@ -210,20 +329,6 @@ const styles = StyleSheet.create({
     flex: 1,
     gap: 2,
   },
-  methodBadge: {
-    paddingHorizontal: 6,
-    paddingVertical: 3,
-    borderRadius: 4,
-    minWidth: 52,
-    alignItems: 'center',
-  },
-  methodText: {
-    color: '#FFFFFF',
-    fontSize: 11,
-    fontWeight: '700',
-    fontFamily: Platform.select({ ios: 'ui-monospace', default: 'monospace' }),
-    letterSpacing: 0.5,
-  },
   rowRight: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -245,6 +350,26 @@ const styles = StyleSheet.create({
     fontSize: 13,
     marginLeft: 2,
   },
+  fireBadge: {
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: 4,
+    backgroundColor: 'rgba(245, 158, 11, 0.1)',
+  },
+  methodBadge: {
+    paddingHorizontal: 6,
+    paddingVertical: 3,
+    borderRadius: 4,
+    minWidth: 52,
+    alignItems: 'center',
+  },
+  methodText: {
+    color: '#FFFFFF',
+    fontSize: 11,
+    fontWeight: '700',
+    fontFamily: Platform.select({ ios: 'ui-monospace', default: 'monospace' }),
+    letterSpacing: 0.5,
+  },
   nameText: {
     fontSize: 14,
     fontWeight: '600',
@@ -261,5 +386,54 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     paddingHorizontal: Spacing.three,
+  },
+  backdrop: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    backgroundColor: 'rgba(0, 0, 0, 0.3)',
+  },
+  sheet: {
+    position: 'absolute',
+    bottom: 0,
+    left: 0,
+    right: 0,
+    borderTopLeftRadius: 16,
+    borderTopRightRadius: 16,
+    paddingHorizontal: Spacing.three,
+    paddingTop: Spacing.two,
+    paddingBottom: Spacing.five,
+  },
+  sheetHandle: {
+    width: 36,
+    height: 4,
+    borderRadius: 2,
+    backgroundColor: '#D1D5DB',
+    alignSelf: 'center',
+    marginBottom: Spacing.three,
+  },
+  sheetLabel: {
+    marginBottom: Spacing.two,
+    paddingHorizontal: Spacing.one,
+  },
+  sheetRow: {
+    paddingVertical: Spacing.three,
+    paddingHorizontal: Spacing.two,
+    borderRadius: Spacing.two,
+  },
+  sheetRowPressed: {
+    backgroundColor: 'rgba(128, 128, 128, 0.1)',
+  },
+  sheetRowContent: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+  },
+  checkmark: {
+    fontSize: 16,
+    color: '#3B82F6',
+    fontWeight: '600',
   },
 });
