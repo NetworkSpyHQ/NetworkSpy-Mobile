@@ -298,7 +298,7 @@ class CaptureVpnService : VpnService() {
                 }
                 logd("Tunnel $key server closed")
             } catch (e: Exception) {
-                loge("Tunnel $key error: ${e.message}")
+                loge("Tunnel $key error: ${e.javaClass.simpleName} - ${e.message}", e)
             }
             close()
         }
@@ -438,7 +438,7 @@ class CaptureVpnService : VpnService() {
 
     private fun findRealAddress(): InetAddress? {
         try {
-            val interfaces = NetworkInterface.getNetworkInterfaces()
+            val interfaces = NetworkInterface.getNetworkInterfaces() ?: return null
             while (interfaces.hasMoreElements()) {
                 val iface = interfaces.nextElement()
                 if (iface.isLoopback || !iface.isUp) continue
