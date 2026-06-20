@@ -15,7 +15,6 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
-import { mockTraffic } from '@/data/mock-traffic';
 import {
   Colors,
   MaxContentWidth,
@@ -191,12 +190,7 @@ export default function TrafficListScreen() {
   const [grouped, setGrouped] = useState(false);
   const [menuVisible, setMenuVisible] = useState(false);
   const [liveTraffic, setLiveTraffic] = useState<TrafficEntry[]>([]);
-  const traffic = useMemo(() => {
-    if (liveTraffic.length > 0) {
-      return [...liveTraffic, ...mockTraffic];
-    }
-    return mockTraffic;
-  }, [liveTraffic]);
+  const traffic = liveTraffic;
 
   const insets = useSafeAreaInsets();
 
@@ -239,12 +233,24 @@ export default function TrafficListScreen() {
         <View style={styles.header}>
           <ThemedText type="subtitle">Traffic</ThemedText>
           <View style={styles.headerRight}>
-            <Pressable onPress={toggleCapture} style={styles.captureDotButton}>
-              <View style={[styles.captureDot, capturing && styles.captureDotActive]} />
-            </Pressable>
             <ThemedText type="small" themeColor="textSecondary">
               {traffic.length}
             </ThemedText>
+            <Pressable
+              style={({ pressed }) => [
+                styles.captureButton,
+                capturing && styles.captureButtonActive,
+                pressed && styles.captureButtonPressed,
+              ]}
+              onPress={toggleCapture}
+            >
+              <ThemedText
+                type="smallBold"
+                themeColor={capturing ? 'text' : 'textSecondary'}
+              >
+                {capturing ? '■ Stop' : '▶ Start'}
+              </ThemedText>
+            </Pressable>
             <Pressable
               style={({ pressed }) => [styles.menuButton, pressed && styles.menuButtonPressed]}
               onPress={() => setMenuVisible(true)}
@@ -323,18 +329,20 @@ const styles = StyleSheet.create({
     color: '#6B7280',
     letterSpacing: 1,
   },
-  captureDot: {
-    width: 8,
-    height: 8,
-    borderRadius: 4,
-    backgroundColor: '#6B7280',
+  captureButton: {
+    paddingHorizontal: Spacing.two,
+    paddingVertical: Spacing.one,
+    borderRadius: Spacing.one,
+    backgroundColor: 'rgba(34, 197, 94, 0.1)',
+    borderWidth: 1,
+    borderColor: 'rgba(34, 197, 94, 0.3)',
   },
-  captureDotActive: {
-    backgroundColor: '#22C55E',
+  captureButtonActive: {
+    backgroundColor: 'rgba(239, 68, 68, 0.1)',
+    borderColor: 'rgba(239, 68, 68, 0.3)',
   },
-  captureDotButton: {
-    padding: Spacing.two,
-    margin: -Spacing.two,
+  captureButtonPressed: {
+    opacity: 0.7,
   },
   list: {
     flex: 1,
