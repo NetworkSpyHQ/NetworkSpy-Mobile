@@ -1,0 +1,76 @@
+name: VpnTest
+options:
+  bundleIdPrefix: com.networkspy.vpntest
+  deploymentTarget:
+    iOS: "15.0"
+  xcodeVersion: "16.0"
+  generateEmptyDirectories: true
+
+settings:
+  base:
+    SWIFT_VERSION: "5.0"
+
+targets:
+  VpnTest:
+    type: application
+    platform: iOS
+    sources:
+      - path: VpnTest
+        type: group
+    settings:
+      PRODUCT_BUNDLE_IDENTIFIER: com.networkspy.vpntest
+      INFOPLIST_FILE: VpnTest/Info.plist
+      CODE_SIGN_STYLE: Automatic
+      DEVELOPMENT_TEAM: ""
+    dependencies:
+      - target: PacketTunnel
+    preBuildScripts:
+      - name: "Generate Bridging Header"
+        script: |
+          mkdir -p "${SRCROOT}/VpnTest"
+          cat > "${SRCROOT}/VpnTest/VpnTest-Bridging-Header.h" << 'EOF'
+          #include "vpn.h"
+          EOF
+        inputFiles: []
+        outputFiles:
+          - "$(SRCROOT)/VpnTest/VpnTest-Bridging-Header.h"
+    settings:
+      SWIFT_OBJC_BRIDGING_HEADER: VpnTest/VpnTest-Bridging-Header.h
+      HEADER_SEARCH_PATHS:
+        - "$(SRCROOT)/../../../../library/vpn/include"
+
+  PacketTunnel:
+    type: app-extension
+    platform: iOS
+    sources:
+      - path: PacketTunnel
+        type: group
+      - path: ../../../../library/vpn/src
+        type: group
+        name: vpn_src
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.networkspy.vpntest.PacketTunnel
+        INFOPLIST_FILE: PacketTunnel/Info.plist
+        CODE_SIGN_STYLE: Automatic
+        DEVELOPMENT_TEAM: ""
+        HEADER_SEARCH_PATHS:
+          - "$(SRCROOT)/../../../../library/vpn/include"
+        SWIFT_OBJC_BRIDGING_HEADER: PacketTunnel/PacketTunnel-Bridging-Header.h
+        GCC_PREPROCESSOR_DEFINITIONS: ""
+    dependencies: []
+    preBuildScripts:
+      - name: "Generate Bridging Header"
+        script: |
+          cat > "${SRCROOT}/PacketTunnel/PacketTunnel-Bridging-Header.h" << 'EOF'
+          #include "vpn.h"
+          EOF
+        inputFiles: []
+        outputFiles:
+          - "$(SRCROOT)/PacketTunnel/PacketTunnel-Bridging-Header.h"
+    info:
+      path: PacketTunnel/Info.plist
+      properties:
+        NSExtension:
+          NSExtensionPointIdentifier: com.apple.networkextension.packet-tunnel
+          NSExtensionPrincipalClass: $(PRODUCT_MODULE_NAME).PacketTunnelProvider

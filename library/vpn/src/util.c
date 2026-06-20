@@ -70,23 +70,3 @@ uint16_t udp_checksum(uint32_t src_ip, uint32_t dst_ip,
     return ip_checksum(pseudo, pseudo_len);
 }
 
-int protect_socket(struct vpn_context *ctx, int fd) {
-    JNIEnv *env;
-    bool attached = false;
-
-    if ((*ctx->jvm)->GetEnv(ctx->jvm, (void **)&env, JNI_VERSION_1_6) != JNI_OK) {
-        if ((*ctx->jvm)->AttachCurrentThread(ctx->jvm, &env, NULL) != JNI_OK) {
-            LOGE("Failed to attach JNI thread");
-            return -1;
-        }
-        attached = true;
-    }
-
-    jboolean result = (*env)->CallBooleanMethod(env, ctx->instance, ctx->mid_protect, (jint)fd);
-
-    if (attached) {
-        (*ctx->jvm)->DetachCurrentThread(ctx->jvm);
-    }
-
-    return result ? 0 : -1;
-}

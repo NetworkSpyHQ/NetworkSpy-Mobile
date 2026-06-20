@@ -1,0 +1,10 @@
+*.xcworkspace
+xcuserdata/
+DerivedData/
+*.xcodeproj
+build/
+
+VpnTest/VpnTest-Bridging-Header.h
+PacketTunnel/PacketTunnel-Bridging-Header.h
+
+.DS_Store
