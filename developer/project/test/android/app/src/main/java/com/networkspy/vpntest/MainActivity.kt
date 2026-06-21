@@ -90,6 +90,12 @@ class MainActivity : Activity() {
         })
         root.addView(buttonRow)
 
+        val interceptButton = Button(this).apply {
+            text = "Start Intercept"
+            setOnClickListener { toggleIntercept(this) }
+        }
+        root.addView(interceptButton)
+
         val certButton = Button(this).apply {
             text = "Install CA Cert"
             setOnClickListener { installCACert() }
@@ -295,6 +301,14 @@ class MainActivity : Activity() {
         captureLog.text = ""
         captureEntries.clear()
         Toast.makeText(this, "Logs cleared", Toast.LENGTH_SHORT).show()
+    }
+
+    private fun toggleIntercept(btn: Button) {
+        val enabled = VpnTestService.activeService?.toggleIntercept() ?: run {
+            Toast.makeText(this, "VPN not running", Toast.LENGTH_SHORT).show()
+            return
+        }
+        btn.text = if (enabled) "Stop Intercept" else "Start Intercept"
     }
 
     private fun installCACert() {

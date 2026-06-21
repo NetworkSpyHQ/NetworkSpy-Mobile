@@ -134,6 +134,7 @@ struct vpn_context {
 };
 
 extern struct vpn_context *g_ctx;
+extern bool g_intercept_enabled;
 
 // ── Platform-specific init ────────────────────────────────────
 

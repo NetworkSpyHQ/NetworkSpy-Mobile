@@ -349,7 +349,7 @@ void handle_tcp_packet(struct vpn_context *ctx,
         if (!s->http_parsed) {
             if (s->is_https) {
                 tls_extract_sni(s, packet + payload_off, payload_len);
-                if (s->http_parsed && s->sni_host[0]) {
+                if (s->http_parsed && s->sni_host[0] && g_intercept_enabled) {
                     // SSL intercept - transfer socket to SSL thread
                     tls_intercept(s);
                     return;

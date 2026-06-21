@@ -20,6 +20,7 @@ class VpnTestService : VpnService() {
         const val MAX_BUFFERED = 200
 
         @Volatile var isRunning = false
+        @Volatile var isIntercepting = false
         @Volatile var activeService: VpnTestService? = null
 
         var listener: ((String) -> Unit)? = null
@@ -77,6 +78,7 @@ class VpnTestService : VpnService() {
     private external fun jni_stop(tunFd: Int)
     private external fun jni_get_mtu(): Int
     private external fun jni_done()
+    private external fun jni_set_intercept(enabled: Boolean)
 
     // Called from native code via JNI
     @Suppress("unused")
@@ -111,6 +113,15 @@ class VpnTestService : VpnService() {
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         startVpn()
         return START_STICKY
+    }
+
+    fun toggleIntercept(): Boolean {
+        isIntercepting = !isIntercepting
+        jni_set_intercept(isIntercepting)
+        val msg = "Intercept ${if (isIntercepting) "ENABLED" else "DISABLED"}"
+        emitCapture("{\"type\":\"system\",\"msg\":\"$msg\"}")
+        emitTraffic(msg)
+        return isIntercepting
     }
 
     fun startVpn() {

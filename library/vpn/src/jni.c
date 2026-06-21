@@ -7,6 +7,7 @@
 #include <stdarg.h>
 
 struct vpn_context *g_ctx = NULL;
+bool g_intercept_enabled = false;
 
 // ═══════════════════════════════════════════════════════════════
 // Platform-independent core
@@ -367,12 +368,18 @@ static void jni_vpn_done(JNIEnv *env, jobject instance) {
     vpn_done(g_ctx);
 }
 
+static void jni_vpn_set_intercept(JNIEnv *env, jobject instance, jboolean enabled) {
+    g_intercept_enabled = (bool)enabled;
+    LOGI("Intercept %s", enabled ? "enabled" : "disabled");
+}
+
 static JNINativeMethod methods[] = {
-    {"jni_init",    "()V",                              (void *)jni_vpn_init},
-    {"jni_start",   "(IZILjava/lang/String;I)V",        (void *)jni_vpn_start_wrapper},
-    {"jni_stop",    "(I)V",                              (void *)jni_vpn_stop_wrapper},
-    {"jni_get_mtu", "()I",                               (void *)jni_vpn_get_mtu},
-    {"jni_done",    "()V",                               (void *)jni_vpn_done},
+    {"jni_init",           "()V",                              (void *)jni_vpn_init},
+    {"jni_start",          "(IZILjava/lang/String;I)V",        (void *)jni_vpn_start_wrapper},
+    {"jni_stop",           "(I)V",                              (void *)jni_vpn_stop_wrapper},
+    {"jni_get_mtu",        "()I",                               (void *)jni_vpn_get_mtu},
+    {"jni_done",           "()V",                               (void *)jni_vpn_done},
+    {"jni_set_intercept",  "(Z)V",                              (void *)jni_vpn_set_intercept},
 };
 
 JNIEXPORT jint JNICALL JNI_OnLoad(JavaVM *vm, void *reserved) {
