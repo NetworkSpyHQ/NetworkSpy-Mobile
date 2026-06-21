@@ -131,6 +131,7 @@ void *ssl_intercept_thread(void *arg) {
     if (ret <= 0) {
         int err = SSL_get_error(client_ssl, ret);
         LOGW("SSL accept failed for %s: err=%d", a->hostname, err);
+        SSL_shutdown(client_ssl);
         SSL_free(client_ssl);
         close(a->client_fd);
         free(a);
