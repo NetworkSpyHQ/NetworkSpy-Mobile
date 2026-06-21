@@ -92,7 +92,11 @@ void session_cleanup(struct vpn_context *ctx) {
                     close(s->socket_fd);
                 }
                 s->state = S_CLOSED;
-                free(s);
+                s->active = false;
+                if (!s->freed) {
+                    s->freed = true;
+                    free(s);
+                }
             } else {
                 prev = &(*prev)->next;
             }

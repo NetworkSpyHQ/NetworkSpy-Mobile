@@ -144,8 +144,10 @@ static void *tcp_server_reader(void *arg) {
          (s->dst_ip >> 24) & 0xFF, (s->dst_ip >> 16) & 0xFF,
          (s->dst_ip >> 8) & 0xFF, s->dst_ip & 0xFF, s->dst_port);
 
-    s->active = false;
-    s->state = S_CLOSING;
+    if (!s->freed) {
+        s->active = false;
+        s->state = S_CLOSING;
+    }
     return NULL;
 }
 
@@ -183,7 +185,7 @@ void handle_tcp_packet(struct vpn_context *ctx,
             if (s->socket_fd >= 0) close(s->socket_fd);
             s->socket_fd = -1;
             session_remove(ctx, s);
-            free(s);
+            if (!s->freed) { s->freed = true; free(s); }
         }
         return;
     }
@@ -216,7 +218,7 @@ void handle_tcp_packet(struct vpn_context *ctx,
         if (s->socket_fd < 0) {
             LOGE("TCP socket() failed: %s", strerror(errno));
             session_remove(ctx, s);
-            free(s);
+            if (!s->freed) { s->freed = true; free(s); }
             return;
         }
 
@@ -225,7 +227,7 @@ void handle_tcp_packet(struct vpn_context *ctx,
             LOGE("TCP protect() failed");
             close(s->socket_fd);
             session_remove(ctx, s);
-            free(s);
+            if (!s->freed) { s->freed = true; free(s); }
             return;
         }
 
@@ -253,7 +255,7 @@ void handle_tcp_packet(struct vpn_context *ctx,
 
             close(s->socket_fd);
             session_remove(ctx, s);
-            free(s);
+            if (!s->freed) { s->freed = true; free(s); }
             return;
         }
 

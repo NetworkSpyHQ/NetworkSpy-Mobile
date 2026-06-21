@@ -123,7 +123,10 @@ void vpn_stop(struct vpn_context *ctx) {
                 s->socket_fd = -1;
             }
             s->state = S_CLOSED;
-            free(s);
+            if (!s->freed) {
+                s->freed = true;
+                free(s);
+            }
             s = next;
         }
         ctx->tcp_sessions[i] = NULL;
