@@ -13,6 +13,9 @@ static void build_tcp_header(uint8_t *pkt, int offset,
                              uint16_t src_port, uint16_t dst_port,
                              uint32_t seq, uint32_t ack,
                              uint8_t flags, uint16_t window) {
+    // Packets going back to the client must swap src/dst:
+    // IP:  src=dst_ip,  dst=src_ip  (pretend to be the server)
+    // TCP: src=dst_port, dst=src_port
     pkt[offset] = (src_port >> 8) & 0xFF;
     pkt[offset + 1] = src_port & 0xFF;
     pkt[offset + 2] = (dst_port >> 8) & 0xFF;
@@ -119,6 +122,7 @@ static void *tcp_server_reader(void *arg) {
         uint8_t *pkt = malloc(total_len);
 
         build_ip_header(pkt, total_len, s->dst_ip, s->src_ip, 6, 64);
+        // Response packet: src/dst swapped (server→client)
         build_tcp_header(pkt, ip_hdr_len, s->dst_port, s->src_port,
                         s->server_seq, s->client_ack, TCP_PSH | TCP_ACK, 65535);
 
@@ -247,6 +251,7 @@ void handle_tcp_packet(struct vpn_context *ctx,
             int total_len = ip_header_len + 20;
             uint8_t rst_pkt[total_len];
             build_ip_header(rst_pkt, total_len, dst_ip, src_ip, 6, 64);
+            // RST responses: also swapped (server→client)
             build_tcp_header(rst_pkt, ip_header_len, dst_port, src_port, seq, 0, TCP_RST | TCP_ACK, 0);
             uint16_t csum = tcp_checksum(dst_ip, src_ip, rst_pkt + ip_header_len, 20, NULL, 0);
             rst_pkt[ip_header_len + 16] = (csum >> 8) & 0xFF;
@@ -270,6 +275,7 @@ void handle_tcp_packet(struct vpn_context *ctx,
         int total_len = ip_header_len + 20;
         uint8_t syn_ack[total_len];
         build_ip_header(syn_ack, total_len, dst_ip, src_ip, 6, 64);
+        // Response: src/dst ports swapped (server→client)
         build_tcp_header(syn_ack, ip_header_len, dst_port, src_port,
                         s->server_seq, s->client_seq, TCP_SYN | TCP_ACK, 65535);
         uint16_t csum = tcp_checksum(dst_ip, src_ip, syn_ack + ip_header_len, 20, NULL, 0);
@@ -309,6 +315,7 @@ void handle_tcp_packet(struct vpn_context *ctx,
         int total_len = ip_header_len + 20;
         uint8_t fin_ack[total_len];
         build_ip_header(fin_ack, total_len, dst_ip, src_ip, 6, 64);
+        // Response: ports swapped (server→client)
         build_tcp_header(fin_ack, ip_header_len, dst_port, src_port,
                         s->server_seq, s->client_ack, TCP_FIN | TCP_ACK, 65535);
         uint16_t csum = tcp_checksum(dst_ip, src_ip, fin_ack + ip_header_len, 20, NULL, 0);
