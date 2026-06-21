@@ -140,7 +140,10 @@ void vpn_stop(struct vpn_context *ctx) {
                 close(s->socket_fd);
                 s->socket_fd = -1;
             }
-            free(s);
+            if (!s->freed) {
+                s->freed = true;
+                free(s);
+            }
             s = next;
         }
         ctx->udp_sessions[i] = NULL;

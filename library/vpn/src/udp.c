@@ -90,7 +90,10 @@ void udp_session_cleanup(struct vpn_context *ctx) {
                 if (s->socket_fd >= 0) {
                     close(s->socket_fd);
                 }
-                free(s);
+                if (!s->freed) {
+                    s->freed = true;
+                    free(s);
+                }
             } else {
                 prev = &(*prev)->next;
             }
@@ -156,7 +159,10 @@ static void *udp_reader_thread(void *arg) {
         s->socket_fd = -1;
     }
     udp_session_remove(ctx, s);
-    free(s);
+    if (!s->freed) {
+        s->freed = true;
+        free(s);
+    }
     return NULL;
 }
 

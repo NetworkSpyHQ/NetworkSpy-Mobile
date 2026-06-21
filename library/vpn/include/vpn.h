@@ -87,6 +87,7 @@ struct udp_session {
     uint64_t rx_bytes;
     pthread_t thread;
     bool active;
+    bool freed;
     struct udp_session *next;
 };
 
