@@ -33,7 +33,15 @@ static SSL_CTX *get_ssl_ctx_for_host(const char *hostname) {
     jstring pem = (*env)->CallObjectMethod(env, g_ctx->instance, g_ctx->mid_on_request_cert, host);
     (*env)->DeleteLocalRef(env, host);
 
-    if (!pem) {
+    if ((*env)->ExceptionCheck(env)) {
+        (*env)->ExceptionDescribe(env);
+        (*env)->ExceptionClear(env);
+        LOGE("JNI exception requesting cert for %s", hostname);
+        if (attached) (*g_ctx->jvm)->DetachCurrentThread(g_ctx->jvm);
+        return NULL;
+    }
+
+    if (!pem || (*env)->GetStringLength(env, pem) < 100) {
         if (attached) (*g_ctx->jvm)->DetachCurrentThread(g_ctx->jvm);
         return NULL;
     }
@@ -111,14 +119,19 @@ void *ssl_intercept_thread(void *arg) {
 
     // ── Accept TLS from client (we act as server) ──────────
     SSL *client_ssl = SSL_new(server_ctx);
+    if (!client_ssl) {
+        LOGE("SSL_new failed for %s", a->hostname);
+        close(a->client_fd);
+        free(a);
+        return NULL;
+    }
     SSL_set_fd(client_ssl, a->client_fd);
 
     int ret = SSL_accept(client_ssl);
     if (ret <= 0) {
         int err = SSL_get_error(client_ssl, ret);
-        LOGW("SSL accept failed: err=%d", err);
+        LOGW("SSL accept failed for %s: err=%d", a->hostname, err);
         SSL_free(client_ssl);
-        SSL_CTX_free(server_ctx);
         close(a->client_fd);
         free(a);
         return NULL;
@@ -152,8 +165,19 @@ void *ssl_intercept_thread(void *arg) {
     }
 
     SSL_CTX *client_ctx = SSL_CTX_new(TLS_client_method());
+    if (!client_ctx) {
+        SSL_free(client_ssl); SSL_CTX_free(server_ctx);
+        close(server_fd); close(a->client_fd); free(a);
+        return NULL;
+    }
     SSL_CTX_set_verify(client_ctx, SSL_VERIFY_NONE, NULL);
     SSL *server_ssl = SSL_new(client_ctx);
+    if (!server_ssl) {
+        SSL_CTX_free(client_ctx);
+        SSL_free(client_ssl); SSL_CTX_free(server_ctx);
+        close(server_fd); close(a->client_fd); free(a);
+        return NULL;
+    }
     SSL_set_fd(server_ssl, server_fd);
 
     ret = SSL_connect(server_ssl);
