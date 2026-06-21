@@ -84,6 +84,10 @@ class MainActivity : Activity() {
             setOnClickListener { stopVpn() }
         }
         buttonRow.addView(stopButton)
+        buttonRow.addView(Button(this).apply {
+            text = "Clear Logs"
+            setOnClickListener { clearLogs() }
+        })
         root.addView(buttonRow)
 
         val certButton = Button(this).apply {
@@ -284,6 +288,13 @@ class MainActivity : Activity() {
             val ts = java.text.SimpleDateFormat("HH:mm:ss", java.util.Locale.getDefault()).format(java.util.Date())
             trafficLog.append("[$ts] $msg\n")
         }
+    }
+
+    private fun clearLogs() {
+        trafficLog.text = "Log output:\n"
+        captureLog.text = ""
+        captureEntries.clear()
+        Toast.makeText(this, "Logs cleared", Toast.LENGTH_SHORT).show()
     }
 
     private fun installCACert() {
